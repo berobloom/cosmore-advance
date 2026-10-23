@@ -89,16 +89,53 @@ static volatile int pendingFlip;
 static uint16_t *target;  /* VRAM page currently being drawn by Present */
 
 /*
-Status bar tile columns (in page tile coordinates) kept on the GBA screen. The
-rest are blank space or cracks in the rock.
+The status bar is 304x48 pixels on the page (tile columns 1-38, rows 19-24),
+but only 240x40 fits below the play area. It is rebuilt to fit: each pixel
+column and row of the GBA version is one column and row of the original, so
+the four groups (score, health, bombs, stars) come through whole, along with
+the numbers the game draws into them. What gets left out is plain rock between
+the groups, the corner rivets, "PRESS F1 FOR HELP", and some of the frame's
+border lines. Spans are {first, count} in status bar pixels.
 */
-static const uint8_t statusColumns[SCREEN_COLS] = {
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-    12, 13, 14, 15, 16, 17, 18,
-    21, 22, 23, 24, 25, 26,
-    30, 31, 32, 33, 34, 35,
-    38
+#define HUD_HEIGHT      ((SCREEN_ROWS - SCROLLH) * 8)
+#define STATUS_PAGE_X   8
+#define STATUS_PAGE_Y   (19 * 8)
+
+typedef struct {
+    uint16_t first, count;
+} Span;
+
+static const Span hudColumnSpans[] = {
+    {0, 4},                                     /* left edge */
+    {11, 1}, {11, 1}, {11, 1}, {11, 1}, {11, 1},
+    {12, 63},                                   /* score */
+    {77, 6},
+    {90, 51},                                   /* health */
+    {141, 3}, {148, 2}, {165, 1}, {165, 1}, {165, 1},
+    {166, 41},                                  /* bombs */
+    {210, 3},
+    {232, 50},                                  /* stars */
+    {284, 5},
+    {300, 4}                                    /* right edge */
 };
+static const Span hudRowSpans[] = {
+    {0, 3},    /* top border */
+    {7, 11},   /* labels */
+    {19, 24},  /* boxes, star, and bomb */
+    {44, 1}, {47, 1}  /* bottom border */
+};
+
+/* "PRESS F1 FOR HELP" (the wrong button here), painted over with plain rock */
+#define HINT_X0         12
+#define HINT_X1         75
+#define HINT_Y0         36
+#define HINT_Y1         43
+#define ROCK_COLOR      6
+
+static uint16_t hudColumns[240];
+static uint8_t hudRows[HUD_HEIGHT];
+static uint32_t hudCache[HUD_HEIGHT * SCREEN_COLS];  /* packed like the pages */
+static int isHudStale = 1;
 
 /*****************************************************************************
  * Helpers                                                                   *
@@ -124,6 +161,7 @@ static inline __attribute__((always_inline)) void Touch(int page, int x, int y, 
     if ((unsigned)x >= CELL_COLS || (unsigned)y >= CELL_ROWS) return;
 
     occupied[page][(y * CELL_COLS) + x] = (uint8_t)occ;
+    if (y >= STATUS_PAGE_Y / 8) isHudStale = 1;
 
     if (page != displayPage) return;
 
@@ -249,6 +287,54 @@ ARM_IWRAM static void RenderBand(int dsty, int srcy, int count, const uint8_t *c
             dst[1] = nibblePair[(w >> 16) & 0xff] | (nibblePair[w >> 24] << 16);
             dst += 2;
         }
+    }
+}
+
+/* Rebuild the fitted status bar from the display page. */
+ARM_IWRAM static void RebuildHud(void)
+{
+    const uint32_t *page = pages[displayPage];
+    uint32_t *out = hudCache;
+    int y, x, k;
+
+    for (y = 0; y < HUD_HEIGHT; y++) {
+        const uint32_t *row = page + (hudRows[y] * CELL_COLS);
+
+        unsigned sy = hudRows[y] - STATUS_PAGE_Y;
+        int inhintrows = sy >= HINT_Y0 && sy <= HINT_Y1;
+
+        for (x = 0; x < 240; x += 8) {
+            uint32_t w = 0;
+
+            for (k = 0; k < 8; k++) {
+                unsigned sx = hudColumns[x + k], c;
+
+                if (inhintrows && sx - STATUS_PAGE_X >= HINT_X0 && sx - STATUS_PAGE_X <= HINT_X1) {
+                    c = ROCK_COLOR;
+                } else {
+                    c = (row[sx >> 3] >> ((sx & 7) * 4)) & 0x0f;
+                }
+                w |= c << (k * 4);
+            }
+            *out++ = w;
+        }
+    }
+
+    isHudStale = 0;
+}
+
+/* Copy the fitted status bar into the target, starting at screen row `dsty`. */
+ARM_IWRAM static void RenderHud(int dsty)
+{
+    const uint32_t *src = hudCache;
+    uint32_t *dst = (uint32_t *)(target + (dsty * 120));
+    int i;
+
+    for (i = 0; i < HUD_HEIGHT * SCREEN_COLS; i++, dst += 2) {
+        uint32_t w = src[i];
+
+        dst[0] = nibblePair[w & 0xff] | (nibblePair[(w >> 8) & 0xff] << 16);
+        dst[1] = nibblePair[(w >> 16) & 0xff] | (nibblePair[w >> 24] << 16);
     }
 }
 
@@ -502,7 +588,8 @@ void VideoPresent(int full)
 
         for (c = 0; c < SCREEN_COLS; c++) columns[c] = (uint8_t)(WINDOWX + c);
         RenderBand(0, WINDOWY * 8, SCROLLH * 8, columns);
-        RenderBand(SCROLLH * 8, 19 * 8, (SCREEN_ROWS - SCROLLH) * 8, statusColumns);
+        if (isHudStale || lastMode != MODE_GAMEPLAY) RebuildHud();
+        RenderHud(SCROLLH * 8);
     } else if (mode == MODE_CROP) {
         uint8_t columns[SCREEN_COLS];
         int c;
@@ -704,6 +791,21 @@ void VideoInit(void)
 
     for (i = 0; i < 16; i++) {
         paletteRegs[i] = (uint8_t)(i < 8 ? i : i + 8);
+    }
+
+    for (i = 0, b = 0; i < (int)(sizeof hudColumnSpans / sizeof hudColumnSpans[0]); i++) {
+        int k;
+
+        for (k = 0; k < hudColumnSpans[i].count && b < 240; k++) {
+            hudColumns[b++] = (uint16_t)(STATUS_PAGE_X + hudColumnSpans[i].first + k);
+        }
+    }
+    for (i = 0, b = 0; i < (int)(sizeof hudRowSpans / sizeof hudRowSpans[0]); i++) {
+        int k;
+
+        for (k = 0; k < hudRowSpans[i].count && b < HUD_HEIGHT; k++) {
+            hudRows[b++] = (uint8_t)(STATUS_PAGE_Y + hudRowSpans[i].first + k);
+        }
     }
     for (i = 0; i < 16; i++) UpdatePaletteEntry(i);
 

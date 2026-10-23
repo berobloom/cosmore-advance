@@ -159,7 +159,7 @@ Joysticks are not supported. Building with `make PORT_TEST_HOOKS=1` enables scri
 
 The SDL port's hardware stand-ins are also built into a Game Boy Advance ROM, with `src/gba/` replacing the parts that the GBA can't do the SDL way. Its own changes to the game source are wrapped in `#ifdef PORT_GBA`.
 
-* **Screen.** The GBA screen is 240x160, so during gameplay the visible map area shrinks from 38x18 tiles to 30x15, and the status bar is compacted to fit beneath it. Dialogs and menus are shown 1:1 when they fit and scaled down when they don't, as with the full-screen pictures and story pages.
+* **Screen.** The GBA screen is 240x160, so during gameplay the visible map area shrinks from 38x18 tiles to 30x15, and the status bar is rebuilt to fit beneath it: all four of its groups stay whole, and only empty rock, border lines, and the "Press F1 for help" note are left out. Dialogs and menus are shown 1:1 when they fit and scaled down when they don't, as with the full-screen pictures and story pages.
 * **Music.** Emulating the OPL2 in real time is beyond the GBA, so every song is rendered to PCM at build time (by `gba/musicgen.c`, using the SDL port's OPL2 emulator) and stored in the ROM. Sound effects play on the GBA's own square-wave channel, like the PC speaker they were written for.
 * **Data and saves.** The group files are embedded in the ROM. Configuration, high scores, and saved games are stored in the cartridge's battery-backed SRAM.
 
