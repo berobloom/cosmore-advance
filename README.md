@@ -141,6 +141,47 @@ There is a `build.bat` script that will compile all three episodes sequentially,
 
 When the script finishes, there will be a new `DIST` directory containing the complete set of Cosmore binaries.
 
+## Native SDL Port
+
+The same source can also be compiled into a native program for Linux (and other systems with a C compiler and SDL2). The `src/sdl/` directory provides stand-ins for the DOS hardware the game talks to: an EGA plane/latch emulation for graphics, PIT timer and PC speaker emulation, an OPL2 (AdLib) emulator for music, and keyboard scancode delivery through the game's own interrupt handler. Changes to the original source are wrapped in `#ifdef __TURBOC__` (or are casts that have no effect under Turbo C), so the DOS build is meant to be unchanged.
+
+Requirements: GNU make, a C compiler, `pkg-config`, and the SDL2 development package (e.g. `libsdl2-dev` on Debian/Ubuntu). From the `src` directory:
+
+    make                # builds cosmore1
+    make EPISODE=2      # builds cosmore2 (likewise for 3)
+    make clean
+
+GNU make picks up `GNUmakefile` ahead of the Borland `Makefile`. To play, put `COSMOx.STN` and `COSMOx.VOL` in the current directory (file names are matched case-insensitively) and run `./cosmorex`. Config and save files are written to the current directory. Alt+Enter toggles fullscreen. The exit text screen is printed to the terminal.
+
+Joysticks are not supported. Building with `make PORT_TEST_HOOKS=1` enables scripted input, screenshots, and audio capture for automated testing; see `src/sdl/testhooks.c`.
+
+## Game Boy Advance Port
+
+The SDL port's hardware stand-ins are also built into a Game Boy Advance ROM, with `src/gba/` replacing the parts that the GBA can't do the SDL way. Its own changes to the game source are wrapped in `#ifdef PORT_GBA`.
+
+* **Screen.** The GBA screen is 240x160, so during gameplay the visible map area shrinks from 38x18 tiles to 30x15, and the status bar is compacted to fit beneath it. Dialogs and menus are shown 1:1 when they fit and scaled down when they don't, as with the full-screen pictures and story pages.
+* **Music.** Emulating the OPL2 in real time is beyond the GBA, so every song is rendered to PCM at build time (by `gba/musicgen.c`, using the SDL port's OPL2 emulator) and stored in the ROM. Sound effects play on the GBA's own square-wave channel, like the PC speaker they were written for.
+* **Data and saves.** The group files are embedded in the ROM. Configuration, high scores, and saved games are stored in the cartridge's battery-backed SRAM.
+
+Requirements: the devkitPro GBA toolchain (`sudo dkp-pacman -S gba-dev`, then `source /etc/profile.d/devkit-env.sh`), GNU make, and a host C compiler. Put `COSMOx.STN` and `COSMOx.VOL` in the `src` directory, then:
+
+    make gba               # builds cosmore1.gba
+    make gba EPISODE=2     # builds cosmore2.gba (likewise for 3)
+
+Controls:
+
+| GBA button | Keyboard key                 |
+|------------|------------------------------|
+| D-pad      | Arrow keys                   |
+| A          | Ctrl (jump)                  |
+| B          | Alt (bomb)                   |
+| Start      | Enter                        |
+| L          | Esc                          |
+| R          | F1 (help menu: save/restore) |
+| Select     | On-screen keyboard           |
+
+The main menu, the help menu, and the "game number (1-9)" prompts for saving and restoring are driven by the D-pad: choose with A or Start, and go back with B. The main menu leaves out the options that have no use on a GBA (ordering information, Apogee's BBS, key redefinition, and quitting), and A or Start answers yes when asked to confirm quitting. The keyboard pages at the end of the instructions are replaced by a page showing these controls. The on-screen keyboard reaches every other key the game uses: move with the D-pad, type with A, and close it with B or Select. Quitting the game resets the cartridge. Joysticks are not supported, and the port has been tested in the mGBA emulator, not on real hardware.
+
 ## Similarities and Differences
 
 Cosmore is a meticulous reconstruction of _Cosmo_, but it is not perfect. Compared to the (UNLZEXE'd, where applicable) original:

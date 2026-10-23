@@ -241,8 +241,14 @@ static bbool isPlayerInPipe;
 /*
 Inline functions.
 */
+#ifdef __TURBOC__
 #define MAP_CELL_ADDR(x, y)   (mapData.w + ((y) << mapYPower) + x)
 #define MAP_CELL_DATA(x, y)   (*(mapData.w + (x) + ((y) << mapYPower)))
+#else
+/* Far pointer offsets wrapped around within the map's 64K segment. */
+#define MAP_CELL_ADDR(x, y)   (mapData.w + ((word)(((y) << mapYPower) + (x)) & 0x7fff))
+#define MAP_CELL_DATA(x, y)   (*MAP_CELL_ADDR(x, y))
+#endif  /* __TURBOC__ */
 #define SET_PLAYER_DIZZY()    { queuePlayerDizzy = true; }
 #define TILE_BLOCK_SOUTH(val) (*(tileAttributeData + ((val) / 8)) & 0x01)
 #define TILE_BLOCK_NORTH(val) (*(tileAttributeData + ((val) / 8)) & 0x02)
@@ -254,7 +260,11 @@ Inline functions.
 #define TILE_CAN_CLING(val)   (*(tileAttributeData + ((val) / 8)) & 0x80)
 
 /* Duplicate of MAP_CELL_DATA() that takes a shift expression to add to `x`. */
+#ifdef __TURBOC__
 #define MAP_CELL_DATA_SHIFTED(x, y, shift_expr) (*(mapData.w + (x) + ((y) << mapYPower) + shift_expr))
+#else
+#define MAP_CELL_DATA_SHIFTED(x, y, shift_expr) (*MAP_CELL_ADDR((x) + (shift_expr), y))
+#endif  /* __TURBOC__ */
 
 /*
 Prototypes for "private" functions where strictly required.
@@ -557,7 +567,9 @@ Replace the entire screen contents with a full-size (320x200) image.
 */
 void DrawFullscreenImage(word image_num)
 {
+#ifdef __TURBOC__
     byte *destbase = MK_FP(0xa000, 0);
+#endif  /* __TURBOC__ */
 
     if (image_num != IMAGE_TITLE && image_num != IMAGE_CREDITS) {
         StopMusic();
@@ -586,7 +598,11 @@ void DrawFullscreenImage(word image_num)
             outport(0x03c4, 0x0002 | mask);
 
             for (i = 0; i < 8000; i++) {
+#ifdef __TURBOC__
                 *(destbase + i) = *(miscData + i + srcbase);
+#else
+                EGAWriteByte(i, *(miscData + i + srcbase));
+#endif  /* __TURBOC__ */
             }
 
             mask <<= 1;
@@ -666,13 +682,25 @@ static void CopyTilesToEGA(byte *source, word dest_length, word dest_offset)
     word i;
     word mask;
     byte *src = source;
+#ifdef __TURBOC__
     byte *dest = MK_FP(0xa000, dest_offset);
+#endif  /* __TURBOC__ */
+
+#ifdef PORT_GBA
+    /* No EGA memory; tile images are drawn straight from `source`. */
+    PortCopyTilesToEGA(source, dest_length, dest_offset);
+    return;
+#endif  /* PORT_GBA */
 
     for (i = 0; i < dest_length; i++) {
         for (mask = 0x0100; mask < 0x1000; mask = mask << 1) {
             outport(0x03c4, mask | 0x0002);
 
+#ifdef __TURBOC__
             *(dest + i) = *(src++);
+#else
+            EGAWriteByte(dest_offset + i, *(src++));
+#endif  /* __TURBOC__ */
         }
     }
 }
@@ -843,9 +871,9 @@ loop, we only need to do table lookups and additions.
 static void DrawMapRegion(void)
 {
     register word ymap;
-    word dstoff = 321;  /* skip 40*8 pixel rows, then one more to skip a col */
+    word dstoff = (WINDOWY * 320) + WINDOWX;  /* skip 40*8 pixel rows, then one more to skip a col */
     word ymapmax;
-    word yscreen = 1;  /* skip one col; there is a blank border there */
+    word yscreen = WINDOWY;  /* skip one col; there is a blank border there */
     word *mapcell;
     word bdoff;
     word bdsrc = EGA_OFFSET_BDROP_EVEN - EGA_OFFSET_SOLID_TILES;
@@ -879,6 +907,10 @@ static void DrawMapRegion(void)
 
     EGA_MODE_LATCHED_WRITE();
 
+#ifdef PORT_GBA
+    PortBeginMapRegion();
+#endif  /* PORT_GBA */
+
     ymapmax = (scrollY + SCROLLH) << mapYPower;
     ymap = scrollY << mapYPower;
 
@@ -894,7 +926,7 @@ static void DrawMapRegion(void)
             } else if (*mapcell >= TILE_MASKED_0) {
                 /* Masked tile with backdrop showing through transparent areas */
                 DrawSolidTile(bdsrc + *(backdropTable + bdoff + x), x + dstoff);
-                DrawMaskedTile(maskedTileData + *mapcell, x + 1, yscreen);
+                DrawMaskedTile(maskedTileData + *mapcell, x + WINDOWX, yscreen);
             } else {
                 /* Solid map tile */
                 DrawSolidTile(*mapcell, x + dstoff);
@@ -922,11 +954,11 @@ static bool IsSpriteVisible(word sprite_type, word frame, word x_origin, word y_
     width = *(actorInfoData + offset + 1);
 
     return (
-        (scrollX <= x_origin && scrollX + SCROLLW > x_origin) ||
-        (scrollX >= x_origin && x_origin + width > scrollX)
+        (scrollX <= x_origin && (word)(scrollX + SCROLLW) > x_origin) ||
+        (scrollX >= x_origin && (word)(x_origin + width) > scrollX)
     ) && (
-        (scrollY + SCROLLH > (y_origin - height) + 1 && scrollY + SCROLLH <= y_origin) ||
-        (y_origin >= scrollY && scrollY + SCROLLH > y_origin)
+        ((word)(scrollY + SCROLLH) > (word)((y_origin - height) + 1) && (word)(scrollY + SCROLLH) <= y_origin) ||
+        (y_origin >= scrollY && (word)(scrollY + SCROLLH) > y_origin)
     );
 }
 
@@ -990,7 +1022,7 @@ static word TestSpriteMove(
         break;
 
     case DIR4_EAST:
-        if (x_origin + width == mapWidth) return MOVE_BLOCKED;
+        if ((word)(x_origin + width) == mapWidth) return MOVE_BLOCKED;
 
         mapcell = MAP_CELL_ADDR(x_origin + width - 1, y_origin);
 
@@ -1029,7 +1061,7 @@ static word TestPlayerMove(word dir, word x_origin, word y_origin)
 
     switch (dir) {
     case DIR4_NORTH:
-        if (playerY - 3 == 0 || playerY - 2 == 0) return MOVE_BLOCKED;
+        if ((word)(playerY - 3) == 0 || (word)(playerY - 2) == 0) return MOVE_BLOCKED;
 
         mapcell = MAP_CELL_ADDR(x_origin, y_origin - 4);
 
@@ -1055,7 +1087,7 @@ static word TestPlayerMove(word dir, word x_origin, word y_origin)
             return MOVE_BLOCKED;
         }
 #else
-        if (maxScrollY + SCROLLH == playerY) return MOVE_FREE;
+        if ((word)(maxScrollY + SCROLLH) == playerY) return MOVE_FREE;
 #endif  /* SAFETY_NET */
 
         mapcell = MAP_CELL_ADDR(x_origin, y_origin);
@@ -1147,11 +1179,11 @@ static bool IsTouchingPlayer(word sprite_type, word frame, word x_origin, word y
     }
 
     if ((
-        (playerX <= x_origin && playerX + 3 > x_origin) ||
-        (playerX >= x_origin && x_origin + width > playerX)
+        (playerX <= x_origin && (word)(playerX + 3) > x_origin) ||
+        (playerX >= x_origin && (word)(x_origin + width) > playerX)
     ) && (
-        (y_origin - height < playerY && playerY <= y_origin) ||
-        (playerY - 4 <= y_origin && y_origin <= playerY)  /* extra <= */
+        ((word)(y_origin - height) < playerY && playerY <= y_origin) ||
+        ((word)(playerY - 4) <= y_origin && y_origin <= playerY)  /* extra <= */
     )) return true;
 
     /* Need this constant return so the jumps compile like the original did */
@@ -1198,9 +1230,9 @@ static bool IsIntersecting(
     }
 
     return (
-        (x2 <= x1 && x2 + width2 > x1) || (x2 >= x1 && x1 + width1 > x2)
+        (x2 <= x1 && (word)(x2 + width2) > x1) || (x2 >= x1 && (word)(x1 + width1) > x2)
     ) && (
-        (y1 - height1 < y2 && y2 <= y1) || (y2 - height2 < y1 && y1 <= y2)
+        ((word)(y1 - height1) < y2 && y2 <= y1) || ((word)(y2 - height2) < y1 && y1 <= y2)
     );
 }
 
@@ -1247,16 +1279,16 @@ void DrawSprite(word sprite_type, word frame, word x_origin, word y_origin, word
     y = (y_origin - height) + 1;
     for (;;) {
         if (
-            x >= scrollX && scrollX + SCROLLW > x &&
-            y >= scrollY && scrollY + SCROLLH > y &&
+            x >= scrollX && (word)(scrollX + SCROLLW) > x &&
+            y >= scrollY && (word)(scrollY + SCROLLH) > y &&
             !TILE_IN_FRONT(MAP_CELL_DATA(x, y))
         ) {
-            drawfn(src, (x - scrollX) + 1, (y - scrollY) + 1);
+            drawfn(src, (x - scrollX) + WINDOWX, (y - scrollY) + WINDOWY);
         }
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) {
                 EGA_BIT_MASK_DEFAULT();
                 break;
@@ -1274,17 +1306,17 @@ flipped:
     y = y_origin;
     for (;;) {
         if (
-            x >= scrollX && scrollX + SCROLLW > x &&
-            y >= scrollY && scrollY + SCROLLH > y &&
+            x >= scrollX && (word)(scrollX + SCROLLW) > x &&
+            y >= scrollY && (word)(scrollY + SCROLLH) > y &&
             !TILE_IN_FRONT(MAP_CELL_DATA(x, y))
         ) {
-            DrawSpriteTileFlipped(src, (x - scrollX) + 1, (y - scrollY) + 1);
+            DrawSpriteTileFlipped(src, (x - scrollX) + WINDOWX, (y - scrollY) + WINDOWY);
         }
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
-            if (y == (y_origin - height) + 1) break;
+        if (x == (word)(x_origin + width - 1)) {
+            if (y == (word)((y_origin - height) + 1)) break;
             x = x_origin;
             y--;
         } else {
@@ -1298,15 +1330,15 @@ infront:
     y = (y_origin - height) + 1;
     for (;;) {
         if (
-            x >= scrollX && scrollX + SCROLLW > x &&
-            y >= scrollY && scrollY + SCROLLH > y
+            x >= scrollX && (word)(scrollX + SCROLLW) > x &&
+            y >= scrollY && (word)(scrollY + SCROLLH) > y
         ) {
-            drawfn(src, (x - scrollX) + 1, (y - scrollY) + 1);
+            drawfn(src, (x - scrollX) + WINDOWX, (y - scrollY) + WINDOWY);
         }
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) break;
             x = x_origin;
             y++;
@@ -1324,7 +1356,7 @@ absolute:
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) break;
             x = x_origin;
             y++;
@@ -1384,16 +1416,16 @@ void DrawPlayer(byte frame, word x_origin, word y_origin, word mode)
 
     for (;;) {
         if (
-            x >= scrollX && scrollX + SCROLLW > x &&
-            y >= scrollY && scrollY + SCROLLH > y &&
+            x >= scrollX && (word)(scrollX + SCROLLW) > x &&
+            y >= scrollY && (word)(scrollY + SCROLLH) > y &&
             !TILE_IN_FRONT(MAP_CELL_DATA(x, y))
         ) {
-            drawfn(src, (x - scrollX) + 1, (y - scrollY) + 1);
+            drawfn(src, (x - scrollX) + WINDOWX, (y - scrollY) + WINDOWY);
         }
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) break;
             x = x_origin;
             y++;
@@ -1410,7 +1442,7 @@ absolute:
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) break;
             x = x_origin;
             y++;
@@ -1424,15 +1456,15 @@ absolute:
 infront:
     for (;;) {
         if (
-            x >= scrollX && scrollX + SCROLLW > x &&
-            y >= scrollY && scrollY + SCROLLH > y
+            x >= scrollX && (word)(scrollX + SCROLLW) > x &&
+            y >= scrollY && (word)(scrollY + SCROLLH) > y
         ) {
-            drawfn(src, (x - scrollX) + 1, (y - scrollY) + 1);
+            drawfn(src, (x - scrollX) + WINDOWX, (y - scrollY) + WINDOWY);
         }
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) break;
             x = x_origin;
             y++;
@@ -1484,7 +1516,7 @@ void DrawCartoon(byte frame, word x_origin, word y_origin)
 
         src += 40;
 
-        if (x == x_origin + width - 1) {
+        if (x == (word)(x_origin + width - 1)) {
             if (y == y_origin) break;
             x = x_origin;
             y++;
@@ -1525,34 +1557,34 @@ static void MovePlayerPlatform(word x_west, word x_east, word x_dir, word y_dir)
     playerY += dir8Y[y_dir];
 
     if ((cmdNorth || cmdSouth) && !cmdWest && !cmdEast) {
-        if (cmdNorth && scrollY > 0 && playerY - scrollY < SCROLLH - 1) {
+        if (cmdNorth && scrollY > 0 && (word)(playerY - scrollY) < SCROLLH - 1) {
             scrollY--;
         }
 
         if (cmdSouth && (
-            scrollY + 4 < playerY || (dir8Y[y_dir] == 1 && scrollY + 3 < playerY)
+            (word)(scrollY + 4) < playerY || (dir8Y[y_dir] == 1 && (word)(scrollY + 3) < playerY)
         )) {
             scrollY++;
         }
     }
 
-    if (playerY - scrollY > SCROLLH - 1) {
+    if ((word)(playerY - scrollY) > SCROLLH - 1) {
         scrollY++;
-    } else if (playerY - scrollY < 3) {
+    } else if ((word)(playerY - scrollY) < 3) {
         scrollY--;
     }
 
-    if (playerX - scrollX > SCROLLW - 15 && mapWidth - SCROLLW > scrollX) {
+    if ((word)(playerX - scrollX) > SCROLLW - 15 && (word)(mapWidth - SCROLLW) > scrollX) {
         scrollX++;
-    } else if (playerX - scrollX < 12 && scrollX > 0) {
+    } else if ((word)(playerX - scrollX) < 12 && scrollX > 0) {
         scrollX--;
     }
 
-    if (dir8Y[y_dir] == 1 && playerY - scrollY > SCROLLH - 4) {
+    if (dir8Y[y_dir] == 1 && (word)(playerY - scrollY) > SCROLLH - 4) {
         scrollY++;
     }
 
-    if (dir8Y[y_dir] == -1 && playerY - scrollY < 3) {
+    if (dir8Y[y_dir] == -1 && (word)(playerY - scrollY) < 3) {
         scrollY--;
     }
 }
@@ -1578,7 +1610,7 @@ static void MovePlatforms(void)
 
         newdir = GetMapTile(plat->x, plat->y) / 8;
 
-        if (playerDeadTime == 0 && plat->y - 1 == playerY && arePlatformsActive) {
+        if (playerDeadTime == 0 && (word)(plat->y - 1) == playerY && arePlatformsActive) {
             MovePlayerPlatform(plat->x - 2, plat->x + 2, newdir, newdir);
         }
 
@@ -1649,7 +1681,7 @@ static void MoveFountains(void)
         SetMapTile(TILE_EMPTY, fnt->x,     fnt->y);
         SetMapTile(TILE_EMPTY, fnt->x + 2, fnt->y);
 
-        if (playerDeadTime == 0 && fnt->y - 1 == playerY) {
+        if (playerDeadTime == 0 && (word)(fnt->y - 1) == playerY) {
             if (fnt->dir != DIR4_NORTH) {
                 MovePlayerPlatform(fnt->x, fnt->x + 2, DIR8_NONE, DIR8_SOUTH);
             } else {
@@ -1690,7 +1722,7 @@ static void DrawFountains(void)
 
         DrawSprite(SPR_FOUNTAIN, slowcount % 2, fnt->x, fnt->y + 1, DRAW_MODE_NORMAL);
 
-        for (y = 0; fnt->height + 1 > y; y++) {
+        for (y = 0; (word)(fnt->height + 1) > y; y++) {
             DrawSprite(SPR_FOUNTAIN, (slowcount % 2) + 2, fnt->x + 1, fnt->y + y + 1, DRAW_MODE_NORMAL);
 
             if (IsTouchingPlayer(SPR_FOUNTAIN, 2, fnt->x + 1, fnt->y + y + 1)) {
@@ -1731,26 +1763,26 @@ static void DrawLights(void)
         yorigin = lights[i].y;
 
         if (
-            xorigin >= scrollX && scrollX + SCROLLW > xorigin &&
-            yorigin >= scrollY && scrollY + SCROLLH - 1 >= yorigin
+            xorigin >= scrollX && (word)(scrollX + SCROLLW) > xorigin &&
+            yorigin >= scrollY && (word)(scrollY + SCROLLH - 1) >= yorigin
         ) {
             if (side == LIGHT_SIDE_WEST) {
-                LightenScreenTileWest((xorigin - scrollX) + 1, (yorigin - scrollY) + 1);
+                LightenScreenTileWest((xorigin - scrollX) + WINDOWX, (yorigin - scrollY) + WINDOWY);
             } else if (side == LIGHT_SIDE_MIDDLE) {
-                LightenScreenTile((xorigin - scrollX) + 1, (yorigin - scrollY) + 1);
+                LightenScreenTile((xorigin - scrollX) + WINDOWX, (yorigin - scrollY) + WINDOWY);
             } else {  /* LIGHT_SIDE_EAST */
-                LightenScreenTileEast((xorigin - scrollX) + 1, (yorigin - scrollY) + 1);
+                LightenScreenTileEast((xorigin - scrollX) + WINDOWX, (yorigin - scrollY) + WINDOWY);
             }
         }
 
-        for (y = yorigin + 1; yorigin + LIGHT_CAST_DISTANCE > y; y++) {
+        for (y = yorigin + 1; (word)(yorigin + LIGHT_CAST_DISTANCE) > y; y++) {
             if (TILE_BLOCK_SOUTH(GetMapTile(xorigin, y))) break;
 
             if (
-                xorigin >= scrollX && scrollX + SCROLLW > xorigin &&
-                y >= scrollY && scrollY + SCROLLH - 1 >= y
+                xorigin >= scrollX && (word)(scrollX + SCROLLW) > xorigin &&
+                y >= scrollY && (word)(scrollY + SCROLLH - 1) >= y
             ) {
-                LightenScreenTile((xorigin - scrollX) + 1, (y - scrollY) + 1);
+                LightenScreenTile((xorigin - scrollX) + WINDOWX, (y - scrollY) + WINDOWY);
             }
         }
     }
@@ -2602,7 +2634,7 @@ static void ActStoneHeadCrusher(word index)
     act->data4 = !act->data4;
 
     if (act->data1 == 0) {
-        if (act->y < playerY && act->x <= playerX + 6 && act->x + 7 > playerX) {
+        if (act->y < playerY && act->x <= (word)(playerX + 6) && (word)(act->x + 7) > playerX) {
             act->data1 = 1;
             act->data2 = act->y;
             act->frame = 1;
@@ -2662,7 +2694,7 @@ static void ActPyramid(word index)
         nextDrawMode = DRAW_MODE_FLIPPED;
 
     } else if (act->data1 == 0) {
-        if (act->y < playerY && act->x <= playerX + 6 && act->x + 5 > playerX) {
+        if (act->y < playerY && act->x <= (word)(playerX + 6) && (word)(act->x + 5) > playerX) {
             act->data1 = 1;
             act->weighted = true;
         }
@@ -2708,7 +2740,7 @@ static void ActGhost(word index)
     if (act->data1 == 4) act->data1 = 0;
 
     if (playerBaseFrame == PLAYER_BASE_WEST) {
-        if (act->x > playerX + 2 && playerClingDir == DIR4_WEST && cmdEast) {
+        if (act->x > (word)(playerX + 2) && playerClingDir == DIR4_WEST && cmdEast) {
             act->frame = (random(35) == 0 ? 4 : 0) + 2;
         } else if (act->x > playerX) {
             act->frame = act->data1 % 2;
@@ -3078,7 +3110,7 @@ static void ActBabyGhostEgg(word index)
 
     if (
         act->data5 == 0 && act->data1 == 0 &&
-        act->y <= playerY && act->x - 6 < playerX && act->x + 4 > playerX
+        act->y <= playerY && (word)(act->x - 6) < playerX && (word)(act->x + 4) > playerX
     ) {
         act->data1 = 1;
         act->data2 = 20;
@@ -3218,12 +3250,12 @@ static void ActParachuteBall(word index)
             act->data2 = 0;
 
             if (act->y == playerY || GameRand() % 2 == 0) {
-                if (act->x >= playerX + 2) {
+                if (act->x >= (word)(playerX + 2)) {
                     act->data1 = 1;  /* W */
                     act->data2 = 0;
                     act->frame = 2;
                     act->data3 = 6;
-                } else if (act->x + 2 <= playerX) {
+                } else if ((word)(act->x + 2) <= playerX) {
                     act->data1 = 2;  /* E */
                     act->data2 = 0;
                     act->frame = 3;
@@ -3362,10 +3394,10 @@ static void ActSplittingPlatform(word index)
         act->data1 = 1;
         SetMapTileRepeat(TILE_BLUE_PLATFORM, 4, act->x, act->y - 1);
 
-    } else if (act->data1 == 1 && act->y - 2 == playerY) {
+    } else if (act->data1 == 1 && (word)(act->y - 2) == playerY) {
         if (
-            (act->x <= playerX && act->x + 3 >= playerX) ||
-            (act->x <= playerX + 2 && act->x + 3 >= playerX + 2)
+            (act->x <= playerX && (word)(act->x + 3) >= playerX) ||
+            (act->x <= (word)(playerX + 2) && (word)(act->x + 3) >= (word)(playerX + 2))
         ) {
             act->data1 = 2;
             act->data2 = 0;
@@ -3478,9 +3510,9 @@ static void ActEyePlant(word index)
         act->data2 = 0;
     }
 
-    if (act->x - 2 > playerX) {
+    if ((word)(act->x - 2) > playerX) {
         act->frame = act->data2;
-    } else if (act->x + 1 < playerX) {
+    } else if ((word)(act->x + 1) < playerX) {
         act->frame = act->data2 + 2;
     } else {
         act->frame = act->data2 + 1;
@@ -3791,13 +3823,13 @@ static void ActBoss(word index)
                 NewDecoration(SPR_SMOKE, 6, act->x,     act->y, DIR8_NORTHWEST, 1);
                 NewDecoration(SPR_SMOKE, 6, act->x + 3, act->y, DIR8_NORTHEAST, 1);
 
-            } else if (act->x + 1 > playerX) {
+            } else if ((word)(act->x + 1) > playerX) {
                 if (TestSpriteMove(DIR4_WEST, SPR_BOSS, 0, act->x - 1, act->y) == MOVE_FREE) {
                     act->x--;
                 }
 
             } else if (
-                act->x + 3 < playerX &&
+                (word)(act->x + 3) < playerX &&
                 TestSpriteMove(DIR4_EAST, SPR_BOSS, 0, act->x + 1, act->y) == MOVE_FREE
             ) {
                 act->x++;
@@ -3838,9 +3870,9 @@ static void ActBoss(word index)
 
         if (act->data5 < 4) {
             DrawSprite(SPR_BOSS, 1, act->x,     act->y - 4, DRAW_MODE_NORMAL);
-        } else if (act->x + 1 > playerX) {
+        } else if ((word)(act->x + 1) > playerX) {
             DrawSprite(SPR_BOSS, 2, act->x + 1, act->y - 4, DRAW_MODE_NORMAL);
-        } else if (act->x + 2 < playerX) {
+        } else if ((word)(act->x + 2) < playerX) {
             DrawSprite(SPR_BOSS, 4, act->x + 1, act->y - 4, DRAW_MODE_NORMAL);
         } else {
             DrawSprite(SPR_BOSS, 3, act->x + 1, act->y - 4, DRAW_MODE_NORMAL);
@@ -4104,7 +4136,7 @@ static void ActTransporter(word index)
 
         if ((int) (playerX - 14) < 0) {
             scrollX = 0;
-        } else if (playerX - 14 > mapWidth - SCROLLW) {
+        } else if ((word)(playerX - 14) > (word)(mapWidth - SCROLLW)) {
             scrollX = mapWidth - SCROLLW;
         } else {
             scrollX = playerX - 14;
@@ -4112,7 +4144,7 @@ static void ActTransporter(word index)
 
         if ((int) (playerY - 12) < 0) {
             scrollY = 0;
-        } else if (playerY - 12 > maxScrollY) {
+        } else if ((word)(playerY - 12) > maxScrollY) {
             scrollY = maxScrollY;
         } else {
             scrollY = playerY - 12;
@@ -4197,28 +4229,28 @@ static void ActSpittingTurret(word index)
 
     if (act->data1 == 0) {
         /* below: a bunch of bare `else` would've sufficed */
-        if (act->y >= playerY - 2) {
-            if (act->x + 1 > playerX) {
+        if (act->y >= (word)(playerY - 2)) {
+            if ((word)(act->x + 1) > playerX) {
                 act->frame = 0;  /* west */
                 act->x = act->data3;
-            } else if (act->x + 2 <= playerX) {
+            } else if ((word)(act->x + 2) <= playerX) {
                 act->frame = 12;  /* east */
                 act->x = act->data3 + 1;
             }
-        } else if (act->y < playerY - 2) {
-            if (act->x - 2 > playerX) {
+        } else if (act->y < (word)(playerY - 2)) {
+            if ((word)(act->x - 2) > playerX) {
                 act->frame = 3;  /* southwest */
                 act->x = act->data3;
-            } else if (act->x + 3 < playerX) {
+            } else if ((word)(act->x + 3) < playerX) {
                 act->frame = 9;  /* southeast */
                 act->x = act->data3 + 1;
-            } else if (act->x - 2 < playerX && act->x + 3 >= playerX) {
+            } else if ((word)(act->x - 2) < playerX && (word)(act->x + 3) >= playerX) {
                 act->frame = 6;  /* south */
                 act->x = act->data3 + 1;
             }
 
             /* less-or-equal in the previous `else if` would've avoided this */
-            if (act->x - 2 == playerX) {
+            if ((word)(act->x - 2) == playerX) {
                 act->frame = 6;  /* south */
                 act->x = act->data3 + 1;
             }
@@ -4507,7 +4539,7 @@ static void ActPusherRobot(word index)
     act->data3 = !act->data3;
 
     if (act->data1 == DIR2_WEST) {
-        if (act->y == playerY && act->x - 3 == playerX && act->data4 == 0) {
+        if (act->y == playerY && (word)(act->x - 3) == playerX && act->data4 == 0) {
             act->frame = 2;
             act->data2 = 8;
             SetPlayerPush(DIR8_WEST, 5, 2, PLAYER_BASE_EAST + PLAYER_PUSHED, false, true);
@@ -4533,7 +4565,7 @@ static void ActPusherRobot(word index)
         }
 
     } else {
-        if (act->y == playerY && act->x + 4 == playerX && act->data4 == 0) {
+        if (act->y == playerY && (word)(act->x + 4) == playerX && act->data4 == 0) {
             act->frame = 5;
             act->data2 = 8;
             SetPlayerPush(DIR8_EAST, 5, 2, PLAYER_BASE_WEST + PLAYER_PUSHED, false, true);
@@ -4581,7 +4613,7 @@ static void ActSentryRobot(word index)
         act->data4--;
 
         if (act->data4 == 1) {
-            if (act->x + 1 > playerX) {
+            if ((word)(act->x + 1) > playerX) {
                 act->data1 = DIR2_WEST;
             } else {
                 act->data1 = DIR2_EAST;
@@ -4862,7 +4894,7 @@ static void ActExitLineVertical(word index)
 {
     Actor *act = actors + index;
 
-    if (act->x <= playerX + 3) {
+    if (act->x <= (word)(playerX + 3)) {
         winLevel = true;
     }
 
@@ -4996,7 +5028,7 @@ static void ActFallingFloor(word index)
             act->data1 = 1;
         }
 
-        if (act->y - 2 == playerY && act->x <= playerX + 2 && act->x + 1 >= playerX) {
+        if ((word)(act->y - 2) == playerY && act->x <= (word)(playerX + 2) && (word)(act->x + 1) >= playerX) {
             act->data2 = 7;
         }
 
@@ -5022,7 +5054,7 @@ static void ActEpisode1End(word index)
 
     nextDrawMode = DRAW_MODE_HIDDEN;
 
-    if (act->data2 == 0 && act->y <= playerY && act->y >= playerY - 4) {
+    if (act->data2 == 0 && act->y <= playerY && act->y >= (word)(playerY - 4)) {
         ShowE1CliffhangerMessage(act->data1);
         act->data2 = 1;
     }
@@ -5043,7 +5075,7 @@ static void ActScoreEffect(word index)
     if (act->data1 > 31) {
         static signed char xmoves[] = {-2, -1, 0, 1, 2, 2, 1, 0, -1, -2};
         act->y--;
-        act->x += xmoves[(act->data1 - 32) % 10];
+        act->x += xmoves[(word)(act->data1 - 32) % 10];
     }
 
     if (act->data1 < 4) {
@@ -5107,7 +5139,7 @@ static void ActBird(word index)
     Actor *act = actors + index;
 
     if (act->data1 == 0) {
-        if (act->x + 1 > playerX) {
+        if ((word)(act->x + 1) > playerX) {
             if (random(10) == 0) {
                 act->data2 = 1;
             } else {
@@ -5136,7 +5168,7 @@ static void ActBird(word index)
             act->data3 = 0;
             act->data1 = 2;
 
-            if (act->x + 1 > playerX) {
+            if ((word)(act->x + 1) > playerX) {
                 act->data4 = DIR2_WEST;
             } else {
                 act->data4 = DIR2_EAST;
@@ -5145,7 +5177,7 @@ static void ActBird(word index)
             act->y--;
         }
 
-        if (act->x + 1 > playerX) {
+        if ((word)(act->x + 1) > playerX) {
             act->frame = (act->data3 % 2) + 2;
         } else {
             act->frame = (act->data3 % 2) + 6;
@@ -5235,14 +5267,14 @@ static void ActRocket(word index)
             }
         }
 
-        if (act->x == playerX && act->y - 7 <= playerY && act->y - 4 >= playerY) {
+        if (act->x == playerX && (word)(act->y - 7) <= playerY && (word)(act->y - 4) >= playerY) {
             playerRecoilLeft = 16;
             isPlayerRecoiling = true;
             ClearPlayerDizzy();
             isPlayerLongJumping = false;
-            if (act->y - 7 == playerY) playerY++;
-            if (act->y - 6 == playerY) playerY++;
-            if (act->y - 4 == playerY) playerY--;
+            if ((word)(act->y - 7) == playerY) playerY++;
+            if ((word)(act->y - 6) == playerY) playerY++;
+            if ((word)(act->y - 4) == playerY) playerY--;
         }
 
         if (act->data2 > 4 && act->data2 % 2 != 0) {
@@ -6635,9 +6667,9 @@ static void DrawExplosions(void)
             NewDecoration(SPR_SPARKLE_LONG, 8, ex->x + 2, ex->y - 2, DIR8_NONE, 1);
         }
 
-        DrawSprite(SPR_EXPLOSION, (ex->age - 1) % 4, ex->x, ex->y, DRAW_MODE_NORMAL);
+        DrawSprite(SPR_EXPLOSION, (word)(ex->age - 1) % 4, ex->x, ex->y, DRAW_MODE_NORMAL);
 
-        if (IsTouchingPlayer(SPR_EXPLOSION, (ex->age - 1) % 4, ex->x, ex->y)) {
+        if (IsTouchingPlayer(SPR_EXPLOSION, (word)(ex->age - 1) % 4, ex->x, ex->y)) {
             HurtPlayer();
         }
 
@@ -6878,7 +6910,7 @@ static bool TryPounce(int recoil)
 
         return true;
 
-    } else if (lastrecoil - 2 < playerRecoilLeft && isPounceReady && isPlayerRecoiling) {
+    } else if ((word)(lastrecoil - 2) < playerRecoilLeft && isPounceReady && isPlayerRecoiling) {
         ClearPlayerDizzy();
 
         if (playerRecoilLeft > 18) {
@@ -7079,14 +7111,14 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
         height = 7;
 
         if (
-            (y - height) + 5 >= playerY && y - height <= playerY &&
-            playerX + 2 >= x && x + width - 1 >= playerX
+            (word)((y - height) + 5) >= playerY && (word)(y - height) <= playerY &&
+            (word)(playerX + 2) >= x && (word)(x + width - 1) >= playerX
         ) {
             isPounceReady = true;
         }
     } else if (
-        (playerFallTime > 3 ? 1 : 0) + (y - height) + 1 >= playerY && y - height <= playerY &&
-        playerX + 2 >= x && x + width - 1 >= playerX &&
+        (word)((playerFallTime > 3 ? 1 : 0) + (y - height) + 1) >= playerY && (word)(y - height) <= playerY &&
+        (word)(playerX + 2) >= x && (word)(x + width - 1) >= playerX &&
         scooterMounted == 0
     ) {
         isPounceReady = true;
@@ -7327,8 +7359,8 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
                 }
             }
         } else if (
-            act->westfree == 0 && act->x + 1 <= playerX && act->x + 5 >= playerX + 2 &&
-            (act->y - 1 == playerY || act->y - 2 == playerY) && isPlayerFalling
+            act->westfree == 0 && (word)(act->x + 1) <= playerX && (word)(act->x + 5) >= (word)(playerX + 2) &&
+            ((word)(act->y - 1) == playerY || (word)(act->y - 2) == playerY) && isPlayerFalling
         ) {
             act->eastfree = 20;
             isPounceReady = false;
@@ -7432,14 +7464,14 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
         if (act->data5 != 0) {
             act->y = act->data2;
             act->data4 = 0;
-            if (act->y > playerY - 4 || act->frame == 6) {
+            if (act->y > (word)(playerY - 4) || act->frame == 6) {
                 HurtPlayer();
             }
             act->frame = 0;
             return false;
         }
         /* Can't maintain parity with the original using an `else if` here. */
-        if (act->y > playerY - 4) {
+        if (act->y > (word)(playerY - 4)) {
             HurtPlayer();
         }
         return false;
@@ -7637,7 +7669,7 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
         return true;
 
     case SPR_PIPE_END:
-        if (act->data2 == 0 && (act->y + 3 == playerY || act->y + 2 == playerY)) {
+        if (act->data2 == 0 && ((word)(act->y + 3) == playerY || (word)(act->y + 2) == playerY)) {
             if (isPlayerPushed) {
                 playerX = act->x;
                 SET_PLAYER_DIZZY();
@@ -7650,7 +7682,7 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
             }
         } else if (
             (!isPlayerFalling || isPlayerRecoiling) && (cmdJump || isPlayerRecoiling) &&
-            act->x == playerX && (act->y + 3 == playerY || act->y + 2 == playerY)
+            act->x == playerX && ((word)(act->y + 3) == playerY || (word)(act->y + 2) == playerY)
         ) {
             isPlayerInPipe = true;
         }
@@ -7658,7 +7690,7 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
 
     case SPR_TRANSPORTER:
         if (transporterTimeLeft == 0) {
-            if (act->x <= playerX && act->x + 4 >= playerX + 2 && act->y == playerY) {
+            if (act->x <= playerX && (word)(act->x + 4) >= (word)(playerX + 2) && act->y == playerY) {
                 if (cmdNorth) {
                     activeTransporter = act->data5;
                     transporterTimeLeft = 15;
@@ -7680,7 +7712,7 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
         return false;
 
     case SPR_SCOOTER:
-        if (isPlayerFalling && (act->y == playerY || act->y + 1 == playerY)) {
+        if (isPlayerFalling && (act->y == playerY || (word)(act->y + 1) == playerY)) {
             scooterMounted = 4;
             StartSound(SND_PLAYER_LAND);
             ClearPlayerPush();
@@ -7761,8 +7793,8 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
 
     case SPR_EXIT_PLANT:
         if (
-            act->frame == 0 && act->x < playerX && act->x + 5 > playerX &&
-            act->y - 2 > playerY && act->y - 5 < playerY && isPlayerFalling
+            act->frame == 0 && act->x < playerX && (word)(act->x + 5) > playerX &&
+            (word)(act->y - 2) > playerY && (word)(act->y - 5) < playerY && isPlayerFalling
         ) {
             act->data5 = 1;
             blockMovementCmds = true;
@@ -7786,10 +7818,10 @@ static bool InteractPlayer(word index, word sprite_type, word frame, word x, wor
             sawMonumentBubble = true;
             NewActor(ACT_SPEECH_UMPH, playerX - 1, playerY - 5);
         }
-        if (act->x == playerX + 2) {
+        if (act->x == (word)(playerX + 2)) {
             SetPlayerPush(DIR8_WEST, 5, 2, PLAYER_BASE_EAST + PLAYER_PUSHED, false, true);
             StartSound(SND_PUSH_PLAYER);
-        } else if (act->x + 2 == playerX) {
+        } else if ((word)(act->x + 2) == playerX) {
             SetPlayerPush(DIR8_EAST, 5, 2, PLAYER_BASE_WEST + PLAYER_PUSHED, false, true);
             StartSound(SND_PUSH_PLAYER);
         }
@@ -7846,7 +7878,7 @@ static void ProcessActor(word index)
 
     if (act->dead) return;
 
-    if (act->y > maxScrollY + SCROLLH + 3) {
+    if (act->y > (word)(maxScrollY + SCROLLH + 3)) {
         act->dead = true;
         return;
     }
@@ -8053,6 +8085,11 @@ void PCSpeakerService(void)
         enableSpeaker = true;
     }
 
+#ifndef __TURBOC__
+    /* Until sounds are loaded, DOS harmlessly read the interrupt vector table. */
+    if (soundDataPtr[activeSoundIndex] == NULL) return;
+#endif  /* __TURBOC__ */
+
     if (*(soundDataPtr[activeSoundIndex] + soundCursor) == END_SOUND) {
         enableSpeaker = false;
         activeSoundPriority = 0;
@@ -8086,11 +8123,16 @@ just written.
 static void DrawFullscreenText(char *entry_name)
 {
     FILE *fp = GroupEntryFp(entry_name);
+#ifdef __TURBOC__
     byte *dest = MK_FP(0xb800, 0);
 
     fread(backdropTable, 4000, 1, fp);
     movmem(backdropTable, dest, 4000);
     printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");  /* 22 of these */
+#else
+    fread(backdropTable, 4000, 1, fp);
+    PortShowTextScreen((byte *)backdropTable);
+#endif  /* __TURBOC__ */
 }
 
 /*
@@ -8248,15 +8290,29 @@ static void Startup(void)
 
     maskedTileData = malloc(40000U);
 
+#ifdef PORT_GBA
+    /*
+    The GBA doesn't have the RAM to copy all of this; the data is used right
+    where it sits in cartridge ROM, and the loads below skip the reads.
+    */
+    soundData1 = (word *)PortGroupEntryROM("SOUNDS.MNI");
+    soundData2 = (word *)PortGroupEntryROM("SOUNDS2.MNI");
+    soundData3 = (word *)PortGroupEntryROM("SOUNDS3.MNI");
+#else
     soundData1 = malloc((word)GroupEntryLength("SOUNDS.MNI"));
     soundData2 = malloc((word)GroupEntryLength("SOUNDS2.MNI"));
     soundData3 = malloc((word)GroupEntryLength("SOUNDS3.MNI"));
+#endif  /* PORT_GBA */
 
     LoadSoundData("SOUNDS.MNI",  soundData1, 0);
     LoadSoundData("SOUNDS2.MNI", soundData2, 23);
     LoadSoundData("SOUNDS3.MNI", soundData3, 46);
 
+#ifdef PORT_GBA
+    playerTileData = PortGroupEntryROM("PLAYERS.MNI");
+#else
     playerTileData = malloc((word)GroupEntryLength("PLAYERS.MNI"));
+#endif  /* PORT_GBA */
 
     mapData.b = malloc(WORD_MAX);
 
@@ -8267,6 +8323,14 @@ static void Startup(void)
     yourself asking "hey, what happens if there aren't two-and-a-bit chunks
     worth of data in the file" you get a shiny gold star.
     */
+#ifdef PORT_GBA
+    actorTileData[0] = PortGroupEntryROM("ACTORS.MNI");
+    actorTileData[1] = actorTileData[0] + WORD_MAX;
+    actorTileData[2] = actorTileData[1] + WORD_MAX;
+
+    CopyTilesToEGA(PortGroupEntryROM("STATUS.MNI"), 7296 / 4, EGA_OFFSET_STATUS_TILES);
+    CopyTilesToEGA(PortGroupEntryROM("TILES.MNI"), 64000U / 4, EGA_OFFSET_SOLID_TILES);
+#else
     actorTileData[0] = malloc(WORD_MAX);
     actorTileData[1] = malloc(WORD_MAX);
     actorTileData[2] = malloc((word)GroupEntryLength("ACTORS.MNI") + 2);
@@ -8276,6 +8340,7 @@ static void Startup(void)
 
     LoadGroupEntryData("TILES.MNI", actorTileData[0], 64000U);
     CopyTilesToEGA(actorTileData[0], 64000U / 4, EGA_OFFSET_SOLID_TILES);
+#endif  /* PORT_GBA */
 
     LoadActorTileData("ACTORS.MNI");
 
@@ -8386,8 +8451,8 @@ static void MovePlayerPush(void)
 
     for (i = 0; i < playerPushSpeed; i++) {
         if (
-            playerX + dir8X[playerPushDir] > 0 &&
-            playerX + dir8X[playerPushDir] + 2 < mapWidth
+            (word)(playerX + dir8X[playerPushDir]) > 0 &&
+            (word)(playerX + dir8X[playerPushDir] + 2) < mapWidth
         ) {
             playerX += dir8X[playerPushDir];
         }
@@ -8395,13 +8460,13 @@ static void MovePlayerPush(void)
         playerY += dir8Y[playerPushDir];
 
         if (
-            scrollX + dir8X[playerPushDir] > 0 &&
-            scrollX + dir8X[playerPushDir] < mapWidth - (SCROLLW - 1)
+            (word)(scrollX + dir8X[playerPushDir]) > 0 &&
+            (word)(scrollX + dir8X[playerPushDir]) < (word)(mapWidth - (SCROLLW - 1))
         ) {
             scrollX += dir8X[playerPushDir];
         }
 
-        if (scrollY + dir8Y[playerPushDir] > 2) {
+        if ((word)(scrollY + dir8Y[playerPushDir]) > 2) {
             scrollY += dir8Y[playerPushDir];
         }
 
@@ -8576,10 +8641,10 @@ static void MovePlayer(void)
                 ) {
                     playerY++;
                 }
-                if (playerY - scrollY > SCROLLH - 4) {
+                if ((word)(playerY - scrollY) > SCROLLH - 4) {
                     scrollY++;
                 }
-                if (playerX - scrollX < 12 && scrollX > 0) {
+                if ((word)(playerX - scrollX) < 12 && scrollX > 0) {
                     scrollX--;
                 }
                 playerClingDir = DIR4_NONE;
@@ -8594,10 +8659,10 @@ static void MovePlayer(void)
                 ) {
                     playerY++;
                 }
-                if (playerY - scrollY > SCROLLH - 4) {
+                if ((word)(playerY - scrollY) > SCROLLH - 4) {
                     scrollY++;
                 }
-                if (playerX - scrollX > SCROLLW - 15 && mapWidth - SCROLLW > scrollX) {
+                if ((word)(playerX - scrollX) > SCROLLW - 15 && (word)(mapWidth - SCROLLW) > scrollX) {
                     scrollX++;
                 }
                 playerClingDir = DIR4_NONE;
@@ -8652,7 +8717,7 @@ static void MovePlayer(void)
                 playerFaceDir = DIR4_EAST;
             }
             playerBaseFrame = PLAYER_BASE_EAST;
-            if (mapWidth - 4 < playerX) {
+            if ((word)(mapWidth - 4) < playerX) {
                 playerX--;
             } else {
                 horizmove = TestPlayerMove(DIR4_EAST, playerX, playerY);
@@ -8828,7 +8893,7 @@ static void MovePlayer(void)
     } else if ((cmdNorth || cmdSouth) && !cmdWest && !cmdEast && !isPlayerFalling && !cmdJump) {
         idlecount = 0;
         if (cmdNorth && !isPlayerNearTransporter && !isPlayerNearHintGlobe) {
-            if (scrollY > 0 && playerY - scrollY < SCROLLH - 1) {
+            if (scrollY > 0 && (word)(playerY - scrollY) < SCROLLH - 1) {
                 scrollY--;
             }
             if (clingslip) {
@@ -8840,9 +8905,9 @@ static void MovePlayer(void)
                 playerFrame = PLAYER_LOOK_NORTH;
             }
         } else if (cmdSouth) {
-            if (scrollY + 3 < playerY) {
+            if ((word)(scrollY + 3) < playerY) {
                 scrollY++;
-                if ((clingslip || isPlayerSlidingEast || isPlayerSlidingWest) && scrollY + 3 < playerY) {
+                if ((clingslip || isPlayerSlidingEast || isPlayerSlidingWest) && (word)(scrollY + 3) < playerY) {
                     scrollY++;
                 }
             }
@@ -8930,22 +8995,22 @@ static void MovePlayer(void)
         }
         if (playerFrame > PLAYER_WALK_4) playerFrame = PLAYER_WALK_1;
     }
-    if (playerY - scrollY > SCROLLH - 4) {
+    if ((word)(playerY - scrollY) > SCROLLH - 4) {
         scrollY++;
     }
-    if (clingslip && playerY - scrollY > SCROLLH - 4) {
+    if (clingslip && (word)(playerY - scrollY) > SCROLLH - 4) {
         scrollY++;
     } else {
-        if (playerRecoilLeft > 10 && playerY - scrollY < 7 && scrollY > 0) {
+        if (playerRecoilLeft > 10 && (word)(playerY - scrollY) < 7 && scrollY > 0) {
             scrollY--;
         }
-        if (playerY - scrollY < 7 && scrollY > 0) {
+        if ((word)(playerY - scrollY) < 7 && scrollY > 0) {
             scrollY--;
         }
     }
-    if (playerX - scrollX > SCROLLW - 15 && mapWidth - SCROLLW > scrollX && mapYPower > 5) {
+    if ((word)(playerX - scrollX) > SCROLLW - 15 && (word)(mapWidth - SCROLLW) > scrollX && mapYPower > 5) {
         scrollX++;
-    } else if (playerX - scrollX < 12 && scrollX > 0) {
+    } else if ((word)(playerX - scrollX) < 12 && scrollX > 0) {
         scrollX--;
     }
 }
@@ -9012,7 +9077,7 @@ static void MovePlayerScooter(void)
         playerBaseFrame = PLAYER_BASE_EAST;
         playerFrame = PLAYER_STAND;
 
-        if (mapWidth - 4 < playerX) playerX--;
+        if ((word)(mapWidth - 4) < playerX) playerX--;
 
         if (
             TestPlayerMove(DIR4_EAST, playerX, playerY) != MOVE_FREE ||
@@ -9043,7 +9108,7 @@ static void MovePlayerScooter(void)
     } else if (cmdSouth && !cmdNorth) {
         playerFrame = PLAYER_LOOK_SOUTH;
 
-        if (maxScrollY + 17 > playerY) playerY++;
+        if ((word)(maxScrollY + 17) > playerY) playerY++;
 
         if (TestPlayerMove(DIR4_SOUTH, playerX, playerY + 1) != MOVE_FREE) {
             playerY--;
@@ -9097,21 +9162,21 @@ decrement:
         cmdBomb = false;
     }
 
-    if (playerY - scrollY > SCROLLH - 4) {
+    if ((word)(playerY - scrollY) > SCROLLH - 4) {
         scrollY++;
     } else {
-        if (playerRecoilLeft > 10 && playerY - scrollY < 7 && scrollY > 0) {
+        if (playerRecoilLeft > 10 && (word)(playerY - scrollY) < 7 && scrollY > 0) {
             scrollY--;
         }
 
-        if (playerY - scrollY < 7 && scrollY > 0) {
+        if ((word)(playerY - scrollY) < 7 && scrollY > 0) {
             scrollY--;
         }
     }
 
-    if (playerX - scrollX > SCROLLW - 15 && mapWidth - SCROLLW > scrollX) {
+    if ((word)(playerX - scrollX) > SCROLLW - 15 && (word)(mapWidth - SCROLLW) > scrollX) {
         scrollX++;
-    } else if (playerX - scrollX < 12 && scrollX > 0) {
+    } else if ((word)(playerX - scrollX) < 12 && scrollX > 0) {
         scrollX--;
     }
 }
@@ -9162,11 +9227,11 @@ static bbool ProcessAndDrawPlayer(void)
 {
     static byte speechframe = 0;
 
-    if (maxScrollY + SCROLLH + 3 < playerY && playerDeadTime == 0) {
+    if ((word)(maxScrollY + SCROLLH + 3) < playerY && playerDeadTime == 0) {
         playerFallDeadTime = 1;
         playerDeadTime = 1;
 
-        if (maxScrollY + SCROLLH + 4 == playerY) {
+        if ((word)(maxScrollY + SCROLLH + 4) == playerY) {
             playerY++;
         }
 
@@ -9267,7 +9332,7 @@ static byte WaitForAnyKey(void)
     lastScancode = SCANCODE_NULL;  /* will get modified by the keyboard interrupt service */
 
     while ((lastScancode & 0x80) == 0)
-        ;  /* VOID */
+        SYSTEM_IDLE();  /* VOID */
 
     return lastScancode & ~0x80;
 }
@@ -9297,7 +9362,11 @@ char *JoinPath(char *dir, char *file)
         *(joinPathBuffer + dstoff) = *(dir + dstoff);
     }
 
+#ifdef __TURBOC__
     *(joinPathBuffer + dstoff++) = '\\';
+#else
+    *(joinPathBuffer + dstoff++) = '/';
+#endif  /* __TURBOC__ */
 
     for (srcoff = 0; *(file + srcoff) != '\0'; srcoff++) {
         *(joinPathBuffer + dstoff++) = *(file + srcoff);
@@ -9316,7 +9385,11 @@ capable of exiting the game if a manipulated save file is loaded.
 */
 bbool LoadGameState(char slot_char)
 {
+#ifdef __TURBOC__
     static char *filename = FILENAME_BASE ".SV ";
+#else
+    static char filename[] = FILENAME_BASE ".SV ";  /* gets modified */
+#endif  /* __TURBOC__ */
     FILE *fp;
     int checksum;
 
@@ -9358,7 +9431,11 @@ character, '1' through '9', or the letter 'T' for the temporary save file.
 */
 static void SaveGameState(char slot_char)
 {
+#ifdef __TURBOC__
     static char *filename = FILENAME_BASE ".SV ";
+#else
+    static char filename[] = FILENAME_BASE ".SV ";  /* gets modified */
+#endif  /* __TURBOC__ */
     FILE *fp;
     word checksum;
 
@@ -9391,7 +9468,11 @@ static byte PromptRestoreGame(void)
     word x = UnfoldTextFrame(11, 7, 28, "Restore a game.", "Press ESC to quit.");
 
     DrawTextLine(x, 14, " What game number (1-9)?");
+#ifdef PORT_GBA
+    scancode = PortSelectGameNumber(x + 24, 14);
+#else
     scancode = WaitSpinner(x + 24, 14);
+#endif  /* PORT_GBA */
 
     if (scancode == SCANCODE_ESC || scancode == SCANCODE_SPACE || scancode == SCANCODE_ENTER) {
         return RESTORE_GAME_ABORT;
@@ -9427,7 +9508,11 @@ static void PromptSaveGame(void)
     DrawTextLine(x, 11, " What game number (1-9)?");
     DrawTextLine(x, 13, " NOTE: Game is saved at");
     DrawTextLine(x, 14, " BEGINNING of level.");
+#ifdef PORT_GBA
+    scancode = PortSelectGameNumber(x + 24, 11);
+#else
     scancode = WaitSpinner(x + 24, 11);
+#endif  /* PORT_GBA */
 
     if (scancode == SCANCODE_ESC || scancode == SCANCODE_SPACE || scancode == SCANCODE_ENTER) {
         return;
@@ -9544,7 +9629,11 @@ title:
         DrawMainMenu();
 
 getkey:
+#ifdef PORT_GBA
+        scancode = PortMainMenuSelect();
+#else
         scancode = WaitSpinner(28, 20 + YSHIFT);
+#endif  /* PORT_GBA */
 
         switch (scancode) {
         case SCANCODE_B:
@@ -9627,6 +9716,9 @@ if the game should continue, restart on a different level, or exit.
 */
 static byte ShowHelpMenu(void)
 {
+#ifdef PORT_GBA
+    PortDrawHelpMenu();
+#else
     word x = UnfoldTextFrame(2, 12, 22, "HELP MENU", "Press ESC to quit.");
     DrawTextLine(x, 5,  " S)ave your game");
     DrawTextLine(x, 6,  " R)estore a game");
@@ -9634,9 +9726,14 @@ static byte ShowHelpMenu(void)
     DrawTextLine(x, 8,  " G)ame redefine");
     DrawTextLine(x, 9,  " V)iew High Scores");
     DrawTextLine(x, 10, " Q)uit Game");
+#endif  /* PORT_GBA */
 
     for (;;) {
+#ifdef PORT_GBA
+        byte scancode = PortHelpMenuSelect();
+#else
         byte scancode = WaitSpinner(29, 12);
+#endif  /* PORT_GBA */
 
         switch (scancode) {
         case SCANCODE_G:
@@ -9779,11 +9876,11 @@ byte ProcessGameInput(byte demo_state)
             if (isKeyDown[SCANCODE_P]) {
                 StartSound(SND_PAUSE_GAME);
                 while (isKeyDown[SCANCODE_P])
-                    ;  /* VOID */
+                    SYSTEM_IDLE();  /* VOID */
                 while (!isKeyDown[SCANCODE_P])
-                    ;  /* VOID */
+                    SYSTEM_IDLE();  /* VOID */
                 while (isKeyDown[SCANCODE_P])
-                    ;  /* VOID */
+                    SYSTEM_IDLE();  /* VOID */
             }
 
             if (isKeyDown[SCANCODE_M]) {
@@ -10055,7 +10152,7 @@ static void GameLoop(byte demo_state)
 {
     for (;;) {
         while (gameTickCount < 13)
-            ;  /* VOID */
+            SYSTEM_IDLE();  /* VOID */
 
         gameTickCount = 0;
 
@@ -10193,7 +10290,7 @@ static void NewMapActorAtIndex(
     if (map_actor_type < 32) {
         switch (map_actor_type) {
         case SPA_PLAYER_START:
-            if (x_origin > mapWidth - 15) {
+            if (x_origin > (word)(mapWidth - 15)) {
                 scrollX = mapWidth - SCROLLW;
             } else if ((int)x_origin - 15 >= 0 && mapYPower > 5) {
                 scrollX = x_origin - 15;
@@ -10367,6 +10464,17 @@ scrolling works, which is explained in detail in DrawMapRegion().
 static void LoadBackdropData(char *entry_name, byte *scratch)
 {
     FILE *fp = GroupEntryFp(entry_name);
+
+#ifdef PORT_GBA
+    /*
+    The backdrop is drawn straight out of ROM, and the shifted versions are
+    produced on the fly while drawing, so none of the copies are made here.
+    */
+    (void) scratch;
+    fclose(fp);
+    CopyTilesToEGA(PortGroupEntryROM(entry_name), BACKDROP_SIZE_EGA_MEM, EGA_OFFSET_BDROP_EVEN);
+    return;
+#endif  /* PORT_GBA */
 
     EGA_MODE_DEFAULT();
     EGA_BIT_MASK_DEFAULT();

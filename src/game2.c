@@ -188,7 +188,9 @@ Define a simple test counter to benchmark the CPU against the PIT.
 */
 static void interrupt ProfileCPUService(void)
 {
+#ifdef __TURBOC__
     profCountCPU = _CX;
+#endif  /* __TURBOC__ */
     profCountPIT++;
 
     outportb(0x0020, 0x20);
@@ -206,6 +208,11 @@ static void ProfileCPU(void)
     setvect(8, ProfileCPUService);
     SetInterruptRate(1000);
 
+#ifndef __TURBOC__
+    /* WaitWallclock() is a no-op in the SDL port; there's nothing to measure. */
+    trial = 0;
+    loops_ms = 0;
+#else
     for (trial = 0, loops_ms = 0; trial < 10; trial++) {
         _DX = 0;  /* serves no apparent purpose */
         _CX = 0xffff;
@@ -233,6 +240,7 @@ done:
             loops_ms = 0xffff - profCountCPU;
         }
     }
+#endif  /* __TURBOC__ */
 
     loops_ms += loops_ms / 2;
     wallclock10us  = loops_ms / (1000 / 10);
@@ -253,6 +261,7 @@ static void WaitWallclock(word loops)
 {
     if (loops == 0) return;
 
+#ifdef __TURBOC__
     _CX = loops;
 
 wait:
@@ -261,6 +270,7 @@ wait:
     asm loop  wait
 done:
     ;  /* VOID */
+#endif  /* __TURBOC__ */
 }
 
 /*
@@ -271,6 +281,10 @@ hardware to process the write and become ready for another (potential) write.
 */
 static void SetAdLibRegister(byte addr, byte data)
 {
+#ifndef __TURBOC__
+    outportb(0x0388, addr);
+    outportb(0x0389, data);
+#else
     asm pushf
 
     disable();
@@ -326,6 +340,7 @@ static void SetAdLibRegister(byte addr, byte data)
     asm in    al,dx
     asm in    al,dx
     asm in    al,dx
+#endif  /* __TURBOC__ */
 }
 
 /*
@@ -342,9 +357,14 @@ static void AdLibService(void)
 
         musicNextDue = musicTickCount + *musicDataPtr++;
 
+#ifdef __TURBOC__
         asm mov   dx,[chunk]
         asm mov   [chunkaddr],dl
         asm mov   [chunkdata],dh
+#else
+        chunkaddr = (byte)(chunk & 0x00ff);
+        chunkdata = (byte)(chunk >> 8);
+#endif  /* __TURBOC__ */
 
         SetAdLibRegister(chunkaddr, chunkdata);
 
@@ -444,6 +464,7 @@ static void interrupt TimerInterruptService(void)
         }
     }
 
+#ifdef __TURBOC__
     asm mov   ax,[WORD PTR timerTickCount]
     asm add   ax,[WORD PTR pit0Value]
     asm mov   [WORD PTR timerTickCount],ax
@@ -454,6 +475,10 @@ acknowledge:
     outportb(0x0020, 0x20);
 done:
     ;  /* VOID */
+#else
+    /* The DOS clock chain doesn't matter here; just acknowledge. */
+    outportb(0x0020, 0x20);
+#endif  /* __TURBOC__ */
 }
 
 /*
@@ -551,14 +576,21 @@ void StopAdLib(void)
 
     StopAdLibPlayback();
 
+#ifdef __TURBOC__
     asm pushf
+#endif  /* __TURBOC__ */
 
     disable();
 
     SetPIT0Value(0);
     setvect(8, savedInt8);
 
+#ifdef __TURBOC__
     asm popf
+#else
+    /* What the popf did; this is only ever called with interrupts enabled. */
+    enable();
+#endif  /* __TURBOC__ */
 
     isAdLibStarted = false;
 }
@@ -595,6 +627,10 @@ void StopAdLibPlayback(void)
     }
 
     enableAdLib = false;
+
+#ifdef PORT_GBA
+    PortStopMusic();
+#endif  /* PORT_GBA */
 }
 
 /*
@@ -604,7 +640,9 @@ static void SwitchMusic(Music *music)
 {
     StopAdLibPlayback();
 
+#ifdef __TURBOC__
     asm pushf
+#endif  /* __TURBOC__ */
 
     disable();
 
@@ -616,9 +654,18 @@ static void SwitchMusic(Music *music)
         musicTickCount = 0;
 
         StartAdLibPlayback();
+
+#ifdef PORT_GBA
+        PortStartMusic();
+#endif  /* PORT_GBA */
     }
 
+#ifdef __TURBOC__
     asm popf
+#else
+    /* What the popf did; this is only ever called with interrupts enabled. */
+    enable();
+#endif  /* __TURBOC__ */
 }
 
 /*
@@ -643,7 +690,7 @@ void WaitHard(word delay)
     gameTickCount = 0;
 
     while (gameTickCount < delay)
-        ;  /* VOID */
+        SYSTEM_IDLE();  /* VOID */
 }
 
 /*
@@ -744,6 +791,8 @@ static byte StepWaitSpinner(word x, word y)
 {
     static word frameoff = 0;
     byte scancode = SCANCODE_NULL;
+
+    SYSTEM_IDLE();
 
     EGA_MODE_LATCHED_WRITE();
 
@@ -1100,7 +1149,7 @@ static void ShowJoystickConfiguration(word stick_num)
 
     /* Wait for all keys to be released */
     while ((lastScancode & 0x80) == 0)
-        ;  /* VOID */
+        SYSTEM_IDLE();  /* VOID */
 
     /* Wait for all joystick buttons to be released */
     do {
@@ -1321,7 +1370,7 @@ static void DrawStatusBarHealth(word x_origin, word y_origin)
         /* Why 8 if there are only 5 health cell spaces? Go replay DUKE1. */
         if (cell >= 8) continue;
 
-        if (playerHealth - 1 > cell) {
+        if ((word)(playerHealth - 1) > cell) {
             /* Each bar is made of 2 font characters stacked vertically */
             DrawSpriteTile(fontTileData + FONT_UPPER_BAR_1, x_origin - cell, y_origin);
             DrawSpriteTile(fontTileData + FONT_LOWER_BAR_1, x_origin - cell, y_origin + 1);
@@ -1568,6 +1617,11 @@ static Music *LoadMusicData(word music_num, Music *dest)
     fp = GroupEntryFp(musicNames[music_num]);
     fread(&dest->datahead, 1, (word)lastGroupEntryLength + 2, fp);
     localdest->length = (word)lastGroupEntryLength;
+
+#ifdef PORT_GBA
+    /* The GBA plays a prerecorded copy of this music instead. */
+    PortSetMusic(musicNames[music_num]);
+#endif  /* PORT_GBA */
 
     SetMusicState(true);
 
@@ -2058,7 +2112,12 @@ void WrapBackdropVertical(byte *src, byte *dest, byte *scratch)
                 WARNING: Undefined behavior. `offset` on left side wants the
                 PRE-incremented value.
                 */
+#ifdef __TURBOC__
                 *(dest + offset + (row * 1280)) = *(src + (row * 1280) + offset++ + 16);
+#else
+                *(dest + offset + (row * 1280)) = *(src + (row * 1280) + offset + 16);
+                offset++;
+#endif  /* __TURBOC__ */
             }
 
             /* Skip 4 pixel rows to next tile */
@@ -2087,7 +2146,12 @@ void WrapBackdropVertical(byte *src, byte *dest, byte *scratch)
                 WARNING: Undefined behavior. `offset` on left side wants the
                 PRE-incremented value.
                 */
+#ifdef __TURBOC__
                 *(dest + offset + (row * 1280) + 16) = *(src + (row * 1280) + offset++ + 1280);
+#else
+                *(dest + offset + (row * 1280) + 16) = *(src + (row * 1280) + offset + 1280);
+                offset++;
+#endif  /* __TURBOC__ */
             }
 
             /* Skip 4 pixel rows to next tile */
@@ -2262,6 +2326,34 @@ void ShowHintsAndKeys(word top)
     DrawTextLine(x, y + 16, "   yourself into the wall again.");
     WaitSpinner(x + 35, y + 17);
 
+#ifdef PORT_GBA
+    /* The keyboard pages below don't apply; show the buttons instead. Erase
+    the hints frame first, or the screen stays too wide to show unscaled. */
+    {
+        word i, j;
+
+        EGA_MODE_LATCHED_WRITE();
+        for (j = top; j < top + 18; j++) {
+            for (i = 1; i < 39; i++) {
+                DrawSolidTile(TILE_EMPTY, i + (j * 320));
+            }
+        }
+    }
+
+    x = UnfoldTextFrame(top, 16, 30, "GBA Controls", "Press ANY key.");
+    DrawTextLine(x, y + 4,  " D-Pad    Walk and look");
+    DrawTextLine(x, y + 5,  " A        Jump");
+    DrawTextLine(x, y + 6,  " B        Drop a bomb");
+    DrawTextLine(x, y + 7,  " R        Help menu, saves");
+    DrawTextLine(x, y + 8,  " L        Quit game");
+    DrawTextLine(x, y + 9,  " START    Select in menus");
+    DrawTextLine(x, y + 10, " SELECT   On-screen keyboard");
+    DrawTextLine(x, y + 12, " With the keyboard (SELECT):");
+    DrawTextLine(x, y + 13, " P pause, S sound, M music");
+    WaitSpinner(x + 27, y + 15);
+    return;
+#endif  /* PORT_GBA */
+
     x = UnfoldTextFrame(top, 18, 38, "Key Definition Screen", "");
     DrawTextLine(x,      y + 4,  "                     Look");
     DrawTextLine(x,      y + 5,  "                      UP");
@@ -2301,6 +2393,16 @@ void ShowInstructions(void)
     word x;
     byte scancode;
 
+#ifdef PORT_GBA
+#   define FOOTER_FIRST     "Press DOWN for next.  L to Exit."
+#   define FOOTER_MIDDLE    "Press UP or DOWN.  L to Exit."
+#   define FOOTER_LAST      "Press UP.  L to Exit."
+#else
+#   define FOOTER_FIRST     "Press PgDn for next.  ESC to Exit."
+#   define FOOTER_MIDDLE    "Press PgUp or PgDn.  Esc to Exit."
+#   define FOOTER_LAST      "Press PgUp.  Esc to Exit."
+#endif  /* PORT_GBA */
+
     FadeOut();
     ClearScreen();
 
@@ -2311,7 +2413,7 @@ void ShowInstructions(void)
 page1:
     FadeOutCustom(1);
 
-    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page One of Five", "Press PgDn for next.  ESC to Exit.");
+    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page One of Five", FOOTER_FIRST);
     DrawTextLine(x, 4,  " OBJECT OF GAME:");
     DrawTextLine(x, 6,  " On a strange and dangerous planet,");
     DrawTextLine(x, 8,  " Cosmo must find and rescue his");
@@ -2331,7 +2433,7 @@ page1:
 page2:
     FadeOutCustom(1);
 
-    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Two of Five", "Press PgUp or PgDn.  Esc to Exit.");
+    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Two of Five", FOOTER_MIDDLE);
     DrawTextLine(x, 4,  " Cosmo has a very special ability:");
     DrawTextLine(x, 6,  " He can use his suction hands to");
     DrawTextLine(x, 8,  " climb up walls.");
@@ -2348,7 +2450,7 @@ page2:
 page3:
     FadeOutCustom(1);
 
-    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Three of Five", "Press PgUp or PgDn.  Esc to Exit.");
+    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Three of Five", FOOTER_MIDDLE);
     DrawTextLine(x,     4,  " Cosmo can jump onto attacking");
     DrawTextLine(x,     6,  " creatures without being harmed.");
     DrawTextLine(x,     8,  " This is also Cosmo's way of");
@@ -2366,7 +2468,7 @@ page3:
 page4:
     FadeOutCustom(1);
 
-    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Four of Five", "Press PgUp or PgDn.  Esc to Exit.");
+    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Four of Five", FOOTER_MIDDLE);
     DrawTextLine(x,     5,  " Use the up and down arrow keys to");
     DrawTextLine(x,     7,  " make Cosmo look up and down,");
     DrawTextLine(x,     9,  " enabling him to see areas that");
@@ -2381,7 +2483,7 @@ page4:
 
     FadeOutCustom(1);
 
-    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Five of Five", "Press PgUp.  Esc to Exit.");
+    x = UnfoldTextFrame(0, 24, 38, "Instructions  Page Five of Five", FOOTER_LAST);
     DrawTextLine(x, 5,  " In Cosmo's Cosmic Adventure, it's");
     DrawTextLine(x, 7,  " up to you to discover the use of");
     DrawTextLine(x, 9,  " all the neat and strange objects");
@@ -2399,6 +2501,10 @@ page4:
     ClearScreen();
 
     ShowHintsAndKeys(3);
+
+#undef FOOTER_FIRST
+#undef FOOTER_MIDDLE
+#undef FOOTER_LAST
 }
 
 /*
@@ -2754,6 +2860,10 @@ bbool PromptQuitConfirm(void)
     byte scancode = WaitSpinner(x + 14, 13);
 
     if (scancode == SCANCODE_Y) return true;
+#ifdef PORT_GBA
+    /* The A button (or Start) also says yes */
+    if (scancode == SCANCODE_CTRL || scancode == SCANCODE_ENTER) return true;
+#endif  /* PORT_GBA */
 
     return false;
 }
@@ -3017,7 +3127,11 @@ void LoadConfigurationData(char *filename)
         isSoundEnabled = fgetc(fp);
 
         for (i = 0; i < 10; i++) {
+#ifdef __TURBOC__
             fscanf(fp, "%lu", &highScoreValues[i]);
+#else
+            fscanf(fp, "%u", &highScoreValues[i]);
+#endif  /* __TURBOC__ */
             fscanf(fp, "%c", &space);
             fscanf(fp, "%[^\n]s", highScoreNames[i]);  /* fairly dangerous */
         }
@@ -3047,7 +3161,11 @@ void SaveConfigurationData(char *filename)
     fputc(isSoundEnabled, fp);
 
     for (i = 0; i < 10; i++) {
+#ifdef __TURBOC__
         fprintf(fp, "%lu", highScoreValues[i]);
+#else
+        fprintf(fp, "%u", highScoreValues[i]);
+#endif  /* __TURBOC__ */
         fprintf(fp, " ");
         fprintf(fp, "%s\n", highScoreNames[i]);
     }
@@ -3614,6 +3732,11 @@ Draw the main menu frame and text options, but don't wait or process any input.
 */
 void DrawMainMenu(void)
 {
+#ifdef PORT_GBA
+    PortDrawMainMenu();
+    return;
+#endif  /* PORT_GBA */
+
 #ifdef FOREIGN_ORDERS
 #   define YSHIFT 1
 #else

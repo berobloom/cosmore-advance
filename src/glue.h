@@ -42,21 +42,39 @@ standing on the safety net, the jump command will allow long-jumping out.
 
 #define GAME_VERSION "1.20"
 
+#ifdef __TURBOC__
 #include <alloc.h>  /* for coreleft() only */
 #include <conio.h>
 #include <dos.h>
 #include <io.h>  /* for filelength() only */
 #include <mem.h>  /* for movmem() only */
+#else
+/* Modern compiler; see the sdl/ directory. */
+#include "sdl/compat.h"
+#endif  /* __TURBOC__ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+Marks a busy-wait loop that relies on an interrupt handler to change something.
+DOS needs nothing here; the SDL port uses it to service its emulated hardware.
+*/
+#ifndef SYSTEM_IDLE
+#define SYSTEM_IDLE()
+#endif  /* SYSTEM_IDLE */
 
 /* Don't typedef here, or bools can't use registers and get forced on stack. */
 enum {false = 0, true};
 
 typedef unsigned char byte;
+#ifdef __TURBOC__
 typedef unsigned int  word;
 typedef unsigned long dword;
+#else
+typedef unsigned short word;  /* must stay 16 bits wide */
+typedef unsigned int   dword;  /* must stay 32 bits wide */
+#endif  /* __TURBOC__ */
 typedef word bool;
 typedef byte bbool;  /* bool in a byte */
 typedef void interrupt (*InterruptFunction)(void);

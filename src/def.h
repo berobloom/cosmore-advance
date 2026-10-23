@@ -133,7 +133,19 @@ failures, and user aborts.
 
 /*
 Size of the game window, not including the status bar and the one-tile black
-border at the top/left/right edges of the screen.
+border at the top/left/right edges of the screen. WINDOWX/WINDOWY give the
+screen tile position of the window's top-left corner.
+
+The GBA port's screen is only 30x20 tiles, so it uses a narrower window that is
+centered horizontally and shortened to leave room for the status bar.
 */
+#ifdef PORT_GBA
+#define SCROLLW                 30
+#define SCROLLH                 15
+#define WINDOWX                 5
+#else
 #define SCROLLW                 38
 #define SCROLLH                 18
+#define WINDOWX                 1
+#endif  /* PORT_GBA */
+#define WINDOWY                 1
