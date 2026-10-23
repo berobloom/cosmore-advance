@@ -1,8 +1,8 @@
-# Cosmore Ports: _Cosmo_ on Linux and the Game Boy Advance
+# Cosmore Advance: _Cosmo_ on the Game Boy Advance and Linux
 
 A fork of [**Cosmore**](https://github.com/smitelli/cosmore) by [Scott Smitelli](mailto:scott@smitelli.com) and [contributors](AUTHORS.md)
 
-Cosmore is a reconstruction of the source code of _Cosmo's Cosmic Adventure_ version 1.20, written to rebuild the original DOS game exactly, quirks and bugs included. This fork takes that source and runs it in two more places:
+Cosmore is a reconstruction of the source code of _Cosmo's Cosmic Adventure_ version 1.20, written to rebuild the original DOS game exactly, quirks and bugs included. **Cosmore Advance** takes that source and runs it in two more places:
 
 * **Linux (and other desktops), through SDL2.** A native program that plays like the DOS original, with the PC hardware it expects (EGA graphics, timer, PC speaker, AdLib music) emulated around it.
 * **The Game Boy Advance.** A cartridge ROM with the game data built in, saves in the cartridge's SRAM, a status bar and menus redesigned for the 240x160 screen, and controls built around the GBA buttons.
