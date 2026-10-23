@@ -1,149 +1,62 @@
-# Cosmore: _Cosmo_ Reconstructed
+# Cosmore Ports: _Cosmo_ on Linux and the Game Boy Advance
 
-by [Scott Smitelli](mailto:scott@smitelli.com) and [contributors](AUTHORS.md)
+A fork of [**Cosmore**](https://github.com/smitelli/cosmore) by [Scott Smitelli](mailto:scott@smitelli.com) and [contributors](AUTHORS.md)
 
-https://www.scottsmitelli.com/projects/cosmore/
+Cosmore is a reconstruction of the source code of _Cosmo's Cosmic Adventure_ version 1.20, written to rebuild the original DOS game exactly, quirks and bugs included. This fork takes that source and runs it in two more places:
 
-**Cosmore** is a reconstruction of the source code of _Cosmo's Cosmic Adventure_ version 1.20, using the original DOS compiler and toolchain. Its goal is to duplicate every detail, quirk, and bug of the original game as faithfully as possible. A player should not be able to distinguish a Cosmore binary from the original.
+* **Linux (and other desktops), through SDL2.** A native program that plays like the DOS original, with the PC hardware it expects (EGA graphics, timer, PC speaker, AdLib music) emulated around it.
+* **The Game Boy Advance.** A cartridge ROM with the game data built in, saves in the cartridge's SRAM, a status bar and menus redesigned for the 240x160 screen, and controls built around the GBA buttons.
 
-The reconstruction is **96.30%** accurate by the following metric: The load images (skipping the EXE headers and relocation tables), when compared byte-by-byte against the corresponding uncompressed originals, have the same byte values in the same locations 96% of the time. The remaining 4% consists of uninitialized data segment memory addresses that have not (yet!) been arranged to match the original layout.
+Both ports run the game's own code. Their changes to it are kept behind `#ifdef`s (or compile to the same thing under Turbo C), so the source still builds the original DOS game as described in [Building for DOS](#building-for-dos).
 
-## The Cosmodoc Project
+## Game Data
 
-Cosmore is pretty well commented at the function level, but there are various nuances, bugs, non-obvious behaviors, and arcane IBM PC hardware details that would require an entire tome to explain in adequate detail. The comments in this repository tend to only call out the absolute most critical bits.
+No game data is included. You need `COSMOx.STN` and `COSMOx.VOL` for each episode you want to play, where _x_ is the episode number. Episode 1 is shareware and its files are widely available. Episodes 2 and 3 are the registered versions, and their files are **not** free to download.
 
-For those who want to see those deep details, I have created a parallel project called [**Cosmodoc**](https://cosmodoc.org/) to document every conceivable piece of this code. Two pages that might be of immediate use to a person looking at Cosmore would be the [list of global variables and constants](https://cosmodoc.org/topics/global-variables-and-constants/) and the [index of all functions](https://cosmodoc.org/topics/function-index/). Feel free to browse the [list of topics](https://cosmodoc.org/topics/) to see if there's something specific that grabs your attention.
+The GBA build puts these files inside the ROM, so a ROM carries the same restrictions as the episode's data files: don't share ROMs of episodes 2 and 3.
 
-At the time of this writing the only incomplete topics in Cosmodoc pertain to player movement and the tick functions for various actor types.
+## Game Boy Advance
 
-## Requirements
+### Building
 
-Cosmore requires a DOS environment to compile and run. [DOSBox](https://www.dosbox.com/) is suitable for this purpose, but a real computer running DOS standalone should also work.
+Requirements:
 
-There is no game data provided with this project, so you must have a copy of `COSMOx.STN` and `COSMOx.VOL` for the episode(s) you wish to play. Episode 1 is shareware and the files are widely available. Episodes 2 and 3 are registered versions and the files are **not** free to download.
+* The devkitPro GBA toolchain. Install devkitPro's pacman (see [Getting Started](https://devkitpro.org/wiki/Getting_Started)), then run `sudo dkp-pacman -S gba-dev` and `source /etc/profile.d/devkit-env.sh`.
+* GNU make and a C compiler for the host, which builds the music renderer.
 
-The build process requires Borland Turbo C version 2.0 and Turbo Assembler version 1.0. The original game was most likely developed with Turbo C 2.0 Professional, which included both products as well as Turbo Debugger 1.5. Borland's successor, Embarcadero Technologies, no longer hosts these exact versions of their long-discontinued products, but they do still exist out there.
+Put `COSMOx.STN` and `COSMOx.VOL` in the `src` directory, then from there:
 
-**Note:** Turbo C was released as version 2.0 in 1988 and 2.01 in 1989. Turbo Assembler was released as version 1.0 in 1988 and 1.01 in 1989. All of these versions are interchangeable and can build correctly, but the resulting binaries will have subtle differences. For maximum accuracy, use Turbo C version **2.0** and Turbo Assembler version **1.0**.
+    make gba               # builds cosmore1.gba
+    make gba EPISODE=2     # builds cosmore2.gba (likewise for 3)
+    make clean             # removes the SDL and GBA builds
 
-The full build process requires an obscene amount of free conventional memory -- about 630 KiB -- at peak. It's possible to shave about 45 KiB off this requirement by eschewing `make` and running the compiler manually on troublesome files. Additionally, another 40 KiB can be spared by running the `*.C` files through the standalone C preprocessor (`cpp -P- ... *.c`) before compiling to slim down the total number of symbols, but that's all a bit Rube Goldberg-esque.
+The ROM is about 14 MB. It runs in emulators such as [mGBA](https://mgba.io/) and on a GBA (tested on a GBA SP) from a flash cartridge. If the cartridge's menu asks for a save type, choose SRAM.
 
-## Environment Setup
+### Controls
 
-There are many different ways to set up a DOS environment depending on your host platform and individual preferences. This guide will make some reasonable assumptions and suggestions, but you are free to deviate as desired. See the [DOSBox Wiki page for MOUNT](https://www.dosbox.com/wiki/MOUNT) for information about mapping the host filesystem into DOS and mounting installation disk images. **All of the instructions in this guide should be done within the DOS environment, not the host.**
+| Button | Does                                      | PC key it stands for |
+|--------|-------------------------------------------|----------------------|
+| D-pad  | Walk, look up and down; move in menus     | Arrow keys           |
+| A      | Jump; choose in menus                     | Ctrl                 |
+| B      | Drop a bomb; go back in menus             | Alt                  |
+| Start  | Choose in menus                           | Enter                |
+| L      | Quit the game                             | Esc                  |
+| R      | Help menu: save, restore, hints           | F1                   |
+| Select | Open the on-screen keyboard               |                      |
 
-For the most pleasant experience, the Turbo C and Turbo Assembler binaries should both be installed into the `C:\TC20` directory, and this location should be added to the DOS `%PATH%` variable. The library and support files included with these programs should be installed into subdirectories named `INCLUDE`, `LIB`, and `STARTUP`.
+The on-screen keyboard reaches every other key the game uses, such as P to pause, S to toggle sound, and M to toggle music. Move with the D-pad, type with A, and close it with B or Select.
 
-This directory tree shows the relevant files and their locations:
+The main menu, the in-game help menu, and the "game number (1-9)" prompts for saving and restoring are all driven by the D-pad. The main menu leaves out the options that have no use on a GBA: ordering information, Apogee's BBS, key redefinition, and quitting. When asked to confirm quitting, A or Start answers yes. The instructions end with a page showing these controls.
 
-    C:\
-     └──TC20\
-         ├──MAKE.EXE
-         ├──TASM.EXE
-         ├──TCC.EXE
-         ├──TLINK.EXE
-         ├──INCLUDE\
-         │   ├──ALLOC.H
-         │   ├──CONIO.H
-         │   ├──DOS.H
-         │   ├──IO.H
-         │   ├──MEM.H
-         │   ├──STDARG.H
-         │   ├──STDIO.H
-         │   ├──STDLIB.H
-         │   └──STRING.H
-         ├──LIB\
-         │   └──CL.LIB
-         └──STARTUP\
-             ├──EMUVARS.ASI
-             └──RULES.ASI
+### Differences From the DOS Game
 
-Your installation will undoubtedly have many more files, but these are the only ones strictly required for this project.
+* **A smaller view.** The GBA screen is 240x160, so the play area shows 30x15 tiles instead of 38x18. The status bar is rebuilt to fit beneath it: its four groups (score, health, bombs, stars) stay whole, and only plain rock, the corner rivets, some border lines, and the "Press F1 for help" note are left out.
+* **Scaled screens.** Dialogs and menus are shown at full size when they fit. Bigger screens, like the full-screen pictures and story pages, are scaled down to fit.
+* **Prerecorded music.** The GBA can't emulate the AdLib's OPL2 chip in real time, so every song is rendered to audio when the ROM is built, using the SDL port's OPL2 emulator, and stored in the ROM. Sound effects play on the GBA's own square-wave channel, much like the PC speaker they were written for.
+* **Saves in SRAM.** Configuration, high scores, and saved games are stored in the cartridge's battery-backed SRAM.
+* **Quitting resets the cartridge,** instead of showing the DOS exit screen. Joysticks are not supported.
 
-To append the `TC20` directory to `%PATH%`, making its `*.EXE` files available for use regardless of the current working directory, run:
-
-    SET PATH=%PATH%;C:\TC20
-
-To make this change persist across restarts, add the line to the `[autoexec]` section of your [DOSBox configuration](https://www.dosbox.com/wiki/Dosbox.conf) or, for true DOS environments, add it to `AUTOEXEC.BAT`.
-
-Execute the following four commands and verify the output to test the installation of each program and its place in `%PATH%`. These should work regardless of the current working directory:
-
-### MAKE
-
-    >make -h
-    MAKE  Version 2.0   Copyright (c) 1987, 1988 Borland International
-    Syntax: MAKE [options ...] target[s]
-    ...
-
-### TASM (Turbo Assembler)
-
-    >tasm
-    Turbo Assembler  Version 1.0  Copyright (c) 1988 by Borland International
-    Syntax:  TASM [options] source [,object] [,listing] [,xref]
-    ...
-
-### TCC (Turbo C Compiler)
-
-    >tcc
-    Turbo C  Version 2.0  Copyright (c) 1987, 1988 Borland International
-    Syntax is: TCC [ options ] file[s]       ...
-
-### TLINK (Turbo Link)
-
-    >tlink
-    Turbo Link  Version 2.0  Copyright (c) 1987, 1988 Borland International
-    Syntax:  TLINK objfiles, exefile, mapfile, libfiles
-    ...
-
-If all four commands produce the expected output, the environment is ready.
-
-## Compiling
-
-`CD` into the `src` directory before running any compilation commands. All compilation is performed by `make`.
-
-**Note:** It is not possible to compile (or even load!) the game source files in the Turbo C development environment (`tc`) due to the sheer size of the files. Even if the files were sized more modestly, the use of inline assembly in some functions prevents compilation in this environment from succeeding.
-
-### Customize the build process (if necessary):
-
-Before beginning, examine the contents of `Makefile` to ensure the filenames and paths match the actual setup of the environment:
-
-* The Turbo C standard library file is expected to be at `C:\TC20\LIB\Cx.LIB`, with _x_ always set to `L` unless the memory model is being messed with.
-* The include directory, where the Borland-provided `*.H` files are found, is expected to be at `C:\TC20\INCLUDE`.
-* The startup directory, where the Borland-provided `*.ASI` files are found, is expected to be at `C:\TC20\STARTUP`.
-
-If any of these do not match the environment, edit `Makefile` as needed.
-
-### To clean up all generated `*.EXE`, `*.OBJ`, and `*.MAP` files:
-
-    make clean
-
-### To build the game:
-
-    make -DEPISODE=n
-
-where _n_ is an episode number: `1`, `2`, or `3`.
-
-**IMPORTANT:** **Always** run `make clean` before changing the `EPISODE` number. `make` is not smart enough to understand that the game needs to be fully recompiled when the episode number changes, and failure to clean the directory may result in the wrong episode (or a broken game!) being generated.
-
-The game will be built as `COSMOREx.EXE`, and a map file containing the addresses of all public symbols will be built as `COSMOREx.MAP`. (The _x_ here -- and subsequently in this document -- matches the specified episode number.)
-
-Compilation of a single episode takes about 1 minute and 50 seconds under DOSBox at the default 3,000 cycles, and about 6 seconds at 75,000 cycles. At higher cycle values, speed gains tend to be negligible on all host systems I've tried.
-
-### To run the game:
-
-Ensure you have the `COSMOx.STN` and `COSMOx.VOL` files for the episode you intend to play in the same directory as the generated `COSMOREx.EXE` file. `CD` to that directory if not already there, then run `COSMOREx`.
-
-## Building a Release
-
-There is a `build.bat` script that will compile all three episodes sequentially, and compress episodes 1 and 2 with LZEXE. (Episode 3 was not compressed before release, so Cosmore does not do it either.) To build the release, run:
-
-    build
-
-When the script finishes, there will be a new `DIST` directory containing the complete set of Cosmore binaries.
-
-## Native SDL Port
-
-The same source can also be compiled into a native program for Linux (and other systems with a C compiler and SDL2). The `src/sdl/` directory provides stand-ins for the DOS hardware the game talks to: an EGA plane/latch emulation for graphics, PIT timer and PC speaker emulation, an OPL2 (AdLib) emulator for music, and keyboard scancode delivery through the game's own interrupt handler. Changes to the original source are wrapped in `#ifdef __TURBOC__` (or are casts that have no effect under Turbo C), so the DOS build is meant to be unchanged.
+## Linux (SDL2)
 
 Requirements: GNU make, a C compiler, `pkg-config`, and the SDL2 development package (e.g. `libsdl2-dev` on Debian/Ubuntu). From the `src` directory:
 
@@ -151,85 +64,49 @@ Requirements: GNU make, a C compiler, `pkg-config`, and the SDL2 development pac
     make EPISODE=2      # builds cosmore2 (likewise for 3)
     make clean
 
-GNU make picks up `GNUmakefile` ahead of the Borland `Makefile`. To play, put `COSMOx.STN` and `COSMOx.VOL` in the current directory (file names are matched case-insensitively) and run `./cosmorex`. Config and save files are written to the current directory. Alt+Enter toggles fullscreen. The exit text screen is printed to the terminal.
+To play, put `COSMOx.STN` and `COSMOx.VOL` in the current directory (file names are matched case-insensitively) and run `./cosmorex`. The game plays with the keyboard, just like on DOS. Alt+Enter toggles fullscreen. Configuration and save files are written to the current directory, and the exit text screen is printed to the terminal. Joysticks are not supported.
 
-Joysticks are not supported. Building with `make PORT_TEST_HOOKS=1` enables scripted input, screenshots, and audio capture for automated testing; see `src/sdl/testhooks.c`.
+Building with `make PORT_TEST_HOOKS=1` enables scripted input, screenshots, and audio capture for automated testing; see `src/sdl/testhooks.c`.
 
-## Game Boy Advance Port
+## How the Ports Work
 
-The SDL port's hardware stand-ins are also built into a Game Boy Advance ROM, with `src/gba/` replacing the parts that the GBA can't do the SDL way. Its own changes to the game source are wrapped in `#ifdef PORT_GBA`.
+The game expects a 1992 PC: it writes to EGA video memory, programs the timer chip, toggles the PC speaker, sends music to an AdLib card, and reads the keyboard through its own interrupt handler. The ports keep all of that code and supply the hardware underneath it.
 
-* **Screen.** The GBA screen is 240x160, so during gameplay the visible map area shrinks from 38x18 tiles to 30x15, and the status bar is rebuilt to fit beneath it: all four of its groups stay whole, and only empty rock, border lines, and the "Press F1 for help" note are left out. Dialogs and menus are shown 1:1 when they fit and scaled down when they don't, as with the full-screen pictures and story pages.
-* **Music.** Emulating the OPL2 in real time is beyond the GBA, so every song is rendered to PCM at build time (by `gba/musicgen.c`, using the SDL port's OPL2 emulator) and stored in the ROM. Sound effects play on the GBA's own square-wave channel, like the PC speaker they were written for.
-* **Data and saves.** The group files are embedded in the ROM. Configuration, high scores, and saved games are stored in the cartridge's battery-backed SRAM.
+* `src/GNUmakefile` builds the SDL port, and its `gba` target hands off to `src/gba/gba.mk`. GNU make reads it ahead of the Borland `Makefile`.
+* `src/sdl/compat.h` stands in for the Turbo C headers and DOS functions, and declares the hooks the GBA port adds.
+* `src/sdl/` is the SDL port: EGA planes and latches (`ega.c`), an OPL2 emulator (`opl2.c`), and the timer, speaker, keyboard, window, and files (`platform.c`).
+* `src/gba/` is the GBA port:
+  * `video.c` draws the EGA pages into the GBA's bitmap mode, choosing for each screen whether to show it 1:1, cropped, or scaled, and builds the fitted status bar.
+  * `audio.c` streams the prerecorded music and drives the speaker channel.
+  * `files.c` serves the group files from ROM and keeps saves in SRAM.
+  * `platform.c` handles startup, interrupts, the buttons, and the on-screen keyboard.
+  * `menu.c` holds the D-pad menus.
+  * `musicgen.c` is the build-time music renderer.
 
-Requirements: the devkitPro GBA toolchain (`sudo dkp-pacman -S gba-dev`, then `source /etc/profile.d/devkit-env.sh`), GNU make, and a host C compiler. Put `COSMOx.STN` and `COSMOx.VOL` in the `src` directory, then:
+## Building for DOS
 
-    make gba               # builds cosmore1.gba
-    make gba EPISODE=2     # builds cosmore2.gba (likewise for 3)
+The DOS build is unchanged from Cosmore. In short, it needs Borland Turbo C 2.0 and Turbo Assembler 1.0 in a DOS environment such as [DOSBox](https://www.dosbox.com/), installed under `C:\TC20` and on the `PATH`. From the `src` directory:
 
-Controls:
+    make clean
+    make -DEPISODE=n
 
-| GBA button | Keyboard key                 |
-|------------|------------------------------|
-| D-pad      | Arrow keys                   |
-| A          | Ctrl (jump)                  |
-| B          | Alt (bomb)                   |
-| Start      | Enter                        |
-| L          | Esc                          |
-| R          | F1 (help menu: save/restore) |
-| Select     | On-screen keyboard           |
+where _n_ is `1`, `2`, or `3`. **Always** run `make clean` before changing the episode number. The game is built as `COSMOREx.EXE`; run it from a directory that also holds `COSMOx.STN` and `COSMOx.VOL`. `build.bat` builds a release of all three episodes into a `DIST` directory.
 
-The main menu, the help menu, and the "game number (1-9)" prompts for saving and restoring are driven by the D-pad: choose with A or Start, and go back with B. The main menu leaves out the options that have no use on a GBA (ordering information, Apogee's BBS, key redefinition, and quitting), and A or Start answers yes when asked to confirm quitting. The keyboard pages at the end of the instructions are replaced by a page showing these controls. The on-screen keyboard reaches every other key the game uses: move with the D-pad, type with A, and close it with B or Select. Quitting the game resets the cartridge. Joysticks are not supported, and the port has been tested in the mGBA emulator, not on real hardware.
+These ports have only been built and tested with GCC and devkitARM; the DOS build of this fork has not been checked against the originals. The full guide to setting up the toolchain, along with how closely the reconstruction matches the original game, is in [Cosmore's README](https://github.com/smitelli/cosmore#readme).
 
-## Similarities and Differences
+## Learning More
 
-Cosmore is a meticulous reconstruction of _Cosmo_, but it is not perfect. Compared to the (UNLZEXE'd, where applicable) original:
+Cosmore's code is commented at the function level. The companion project [**Cosmodoc**](https://cosmodoc.org/) documents it in depth, including the [global variables and constants](https://cosmodoc.org/topics/global-variables-and-constants/), an [index of all functions](https://cosmodoc.org/topics/function-index/), and a [list of topics](https://cosmodoc.org/topics/) covering the game's behavior and the PC hardware it uses.
 
-### Similarities
+The port code follows Cosmore's naming and style conventions, which are described in [Cosmore's README](https://github.com/smitelli/cosmore#code-conventions).
 
-* **No perceptible difference in gameplay.** As stated in the introduction, a player should not be able to distinguish a Cosmore binary from the original.
-* **Fully compatible with original demo, save, and configuration files.** Any data file that works correctly with the original game will work correctly with Cosmore, and vice versa. All demo files should play perfectly, without any desynchronization.
-* **Same file size.** The reconstructed executable takes the exact same amount of space on disk, and the same amount in memory, as the original. *(TODO: Not precisely. Episode 2, after LZEXE, is 32 bytes smaller than the original.)*
-* **Same segment alignment and size.** The position of the C startup code, assembly routines, code segments, library functions, and data segments all match.
-* **Same function alignment and size.** All of the functions appear in the same order as the original, each beginning and ending at the same addresses as the original.
-* **Same instruction sequence.** All of the x86 instructions appear in the same order as the original. The CPU is performing the same steps in the same sequence, presumably taking the same number of clock cycles as the original.
-* **Identical static data.** The entire static data area matches identically.
+## Credits
 
-### Differences
-
-* **Different arrangement of entries in the relocation table.** I have not yet determined what influences the arrangement of the relocation table entries in the EXE file header, so these tables do not match. They have the same length and content, just in different orders.
-* **Different arrangement of data in BSS.** All of the variables in the BSS area (that is, variables that exist outside of any function which are not given an initial value in the source code) are out of order. This means that any instruction that references an affected memory address in this area will have different displacement bytes. The arrangement of these memory addresses appears to be influenced by the original variable names in the C source, none of which are definitively known. If there are any bugs in the original game that involve out-of-bounds memory access, Cosmore will likely behave differently.
-* **Different file hashes.** Because the reconstruction is not byte-for-byte identical, the file hashes do not match the originals.
-
-## Standing on the Shoulders of Giants
-
-This project includes a few files that are not my own work, but which are required to build and package the final binaries. These files are:
-
-* `src/C0.ASM`: This is the startup code for the Turbo C runtime library version 2.0, copyright 1988 by Borland International. This file is not needed to build the vast majority of projects under Turbo C, and (in situations where it is required) the compiler ships with its own copy for the developer's use. In Cosmore's case, there is a one-line change near the very bottom of this file to include the assembly code in `lowlevel.asm`, and there seemed to be no other obvious way to replicate the way the original game was built without embedding this file into the project.
-* `src/LZEXE91/LZEXE.EXE`: This is LZEXE version 0.91, copyright 1989 by Fabrice Bellard. This is used by the build script to compress the final compiled binaries in the same manner as the original game. Also included is `LZEXE.DOC`, the documentation for the tool as originally released; and `lzexe.txt`, a duplicate copy of this documentation with the CP437 encoding translated to UTF-8. The related tools COMTOEXE, INFOEXE, and UPACKEXE are not used and therefore not included in this project. Note that the tool and its documentation are entirely in French.
-
-## Code Conventions
-
-Cosmore aims to be an educational tool as much as it is a working software project. This has resulted in identifier names that are longer and more descriptive than one might find in other C codebases. Each of these names tries to succinctly convey its function without adding too much line noise. The goal is for names to be unique enough to be machine-selectable by `grep` or a find-and-replace tool but not so unique that the additional length serves no benefit. It is a delicate balance, and only serves to assist human eyes.
-
-Broadly, these are the naming conventions that the code in Cosmore adheres to:
-
-* Global variables use **lowerCamelCase** and will always be constructed from two or more words. Boolean flags tend to begin with verbs that imply a yes-or-no state ("are", "is", "has", "saw"). When any array is described in comments or documentation, the name will be suffixed with square brackets.
-* Each C function name uses **UpperCamelCase** text. The first word is typically an English verb that summarizes the overall effect of what the function does (e.g. "Draw", "Load", "Prompt", "Set"). When functions are described in comments or documentation, the name will be suffixed with parentheses. Assembly language procedures are named similarly, except for the addition of a leading underscore which is required for painless linking with the C code.
-* Things defined with `typedef` to produce a shorter name also use **UpperCamelCase**.
-* Function parameters are **lowercase** when single words, or **snake_case** when multiple words.
-* Local variables inside a function are **lowercase** and, where necessary, multiple words are collapsed to **multiplewords** at this level. These variables are more likely to use abbreviated names due to their limited scope.
-* Structure, union, and enumeration members also use the lowercase **multiplewords** form.
-* Macros and other preprocessor names are in **SCREAMING_SNAKE_CASE**.
-
-Stylistic conventions (colloquially, spaces and braces) are fairly apparent and tend to be internally consistent. There are some choices that warrant specific attention:
-
-* The code tests boolean types directly, while using a compare against zero for integer types. Even though the values are handled identically under the hood, booleans will appear like `if (boolVal)` and integers will appear like `if (intVal != 0)`. This serves as a reminder of the underlying type.
-* When hardware constants are encountered (think register addresses and values) the hexadecimal literals are zero-padded to the full width of the register. Using a live example from the code -- `outportb(0x0061, inportb(0x0061) & ~0x03)` -- the I/O addresses are padded to a 16-bit width while the value written is padded to 8 bits. This reinforces the bit widths of the locations being operated on.
-* If something needed to be done to avoid a compiler warning, that thing was done. Even the pedantic nonsense that required uglying up the code.
-* Similarly, many things do not raise compiler warnings but still look weird under scrutiny. These tend to be unfortunate necessities that are required to faithfully recreate the original executable. These are called out with comments.
+* The reconstructed game source is the work of [Cosmore](https://github.com/smitelli/cosmore)'s author and [contributors](AUTHORS.md).
+* `src/C0.ASM` is the Turbo C 2.0 startup code, copyright 1988 by Borland International, with a one-line change to include `lowlevel.asm`.
+* `src/LZEXE91/LZEXE.EXE` is LZEXE 0.91, copyright 1989 by Fabrice Bellard, used by `build.bat` to compress DOS releases like the original game.
+* The GBA port is built with [devkitPro](https://devkitpro.org/)'s devkitARM and links against libgba.
 
 ## License
 
-Except for the aforementioned files, MIT. All rights and trademarks to this game and its associated assets belongs to Apogee Software.
+Except for `src/C0.ASM` and the files in `src/LZEXE91/`, MIT. All rights and trademarks to this game and its associated assets belong to Apogee Software.
