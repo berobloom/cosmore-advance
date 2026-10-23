@@ -17,6 +17,19 @@ The GBA build puts these files inside the ROM, so a ROM carries the same restric
 
 ## Game Boy Advance
 
+### Screenshots
+
+| | |
+|:-:|:-:|
+| ![The main menu, chosen from with the D-pad](docs/screenshots/gba-main-menu.png) | ![Gameplay, with the status bar fitted below the play area](docs/screenshots/gba-gameplay.png) |
+| The main menu | Gameplay and the fitted status bar |
+| ![The in-game help menu](docs/screenshots/gba-help-menu.png) | ![Picking a save slot with the D-pad](docs/screenshots/gba-save-prompt.png) |
+| The help menu (R) | Picking a save slot |
+| ![The GBA controls page](docs/screenshots/gba-controls.png) | ![The on-screen keyboard over the main menu](docs/screenshots/gba-keyboard.png) |
+| The controls page | The on-screen keyboard (Select) |
+
+Screenshots are from Episode 1, taken in mGBA at twice the GBA's resolution.
+
 ### Building
 
 Requirements:
